@@ -4,6 +4,7 @@
 
 group("bin") {
   deps = [
+    "stardock",
     "starnix",
     "starsh",
   ]
