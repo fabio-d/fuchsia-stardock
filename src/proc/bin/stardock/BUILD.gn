@@ -18,7 +18,21 @@ rustc_binary("manager_bin") {
   edition = "2018"
 
   source_root = "manager/main.rs"
-  sources = [ "manager/main.rs" ]
+  deps = [
+    "//sdk/fidl/fuchsia.stardock:fuchsia.stardock-rustc",
+    "//src/lib/diagnostics/log/rust",
+    "//src/lib/fidl/rust/fidl",
+    "//src/lib/fuchsia-async",
+    "//src/lib/fuchsia-component",
+    "//third_party/rust_crates:anyhow",
+    "//third_party/rust_crates:futures",
+    "//third_party/rust_crates:log",
+  ]
+
+  sources = [
+    "manager/main.rs",
+    "manager/manager.rs",
+  ]
 }
 
 fuchsia_component("stardock_component") {
@@ -37,6 +51,14 @@ rustc_binary("cli_bin") {
   edition = "2018"
 
   source_root = "cli/main.rs"
+  deps = [
+    "//sdk/fidl/fuchsia.stardock:fuchsia.stardock-rustc",
+    "//src/lib/fidl/rust/fidl",
+    "//src/lib/fuchsia-async",
+    "//src/lib/fuchsia-component",
+    "//third_party/rust_crates:anyhow",
+  ]
+
   sources = [ "cli/main.rs" ]
 }
 

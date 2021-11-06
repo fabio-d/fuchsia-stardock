@@ -211,6 +211,10 @@
             from: "#starnix_manager",
         },
         {
+            protocol: "fuchsia.stardock.Manager",
+            from: "#stardock_manager",
+        },
+        {
             protocol: "fuchsia.hardware.serial.NewDeviceProxy",
             from: "#debug_serial",
         },

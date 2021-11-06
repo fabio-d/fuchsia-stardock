@@ -96,6 +96,11 @@
             environment: "#full-resolver-env",
         },
         {
+            name: "stardock_manager",
+            url: "fuchsia-pkg://fuchsia.com/stardock#meta/stardock_manager.cm",
+            environment: "#full-resolver-env",
+        },
+        {
             name: "stash",
             url: "fuchsia-pkg://fuchsia.com/stash#meta/stash.cm",
         },
@@ -482,6 +487,7 @@
                 "#setui_service",
                 "#soundplayer",
                 "#ssh-key-manager",
+                "#stardock_manager",
                 "#starnix_manager",
                 "#stash",
                 "#stash2",

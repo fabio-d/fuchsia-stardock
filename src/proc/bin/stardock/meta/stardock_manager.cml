@@ -7,4 +7,13 @@
         runner: "elf",
         binary: "bin/stardock-manager",
     },
+    capabilities: [
+        { protocol: "fuchsia.stardock.Manager" },
+    ],
+    expose: [
+        {
+            protocol: "fuchsia.stardock.Manager",
+            from: "self",
+        },
+    ],
 }
