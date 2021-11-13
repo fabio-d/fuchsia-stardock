@@ -12,5 +12,8 @@ group("bin") {
 
 group("tests") {
   testonly = true
-  deps = [ "starnix:tests" ]
+  deps = [
+    "stardock:tests",
+    "starnix:tests",
+  ]
 }

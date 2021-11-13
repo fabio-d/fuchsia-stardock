@@ -8,7 +8,28 @@
 // Copyright 2021 Fabio D'Urso. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+
 library fuchsia.stardock;
+
+// Reference: https://github.com/moby/moby/issues/10392
+const MAX_NAME_LENGTH uint64 = 255;
+
+// Reference: https://docs.docker.com/engine/reference/commandline/tag/
+const MAX_TAG_LENGTH uint64 = 128;
+
+/// SHA256 hex digest. It is used to identify images, blobs and containers.
+///
+/// It can only contain numbers ('0' to '9') and lower-case 'a' to 'f' letters.
+///
+/// Sha256Digest values always contain exactly 64 characters (64 hex chars
+/// correspond to 32 bytes or 256 bits). This type is used to convey unambiguous
+/// computer-generated hashes.
+///
+/// Abbreviated digests (with less than 64 characters) might also be used in
+/// image references. They are usually strings typed by the user, and the
+/// recepient must inspect its registry to find if they unambiguously match the
+/// first characters of exactly one full Sha256Digest.
+alias Sha256Digest = string:64;
 
 /// Root interface of the stardock_manager component.
 @discoverable
