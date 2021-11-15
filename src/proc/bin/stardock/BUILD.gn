@@ -55,6 +55,7 @@ rustc_binary("manager_bin") {
 
   source_root = "manager/main.rs"
   deps = [
+    ":common",
     "//sdk/fidl/fuchsia.stardock:fuchsia.stardock-rustc",
     "//src/lib/diagnostics/log/rust",
     "//src/lib/fidl/rust/fidl",
@@ -63,9 +64,11 @@ rustc_binary("manager_bin") {
     "//third_party/rust_crates:anyhow",
     "//third_party/rust_crates:futures",
     "//third_party/rust_crates:log",
+    "//third_party/rust_crates:serde_json",
   ]
 
   sources = [
+    "manager/image.rs",
     "manager/main.rs",
     "manager/manager.rs",
   ]
@@ -85,23 +88,46 @@ fuchsia_package("stardock_package") {
 rustc_binary("cli_bin") {
   output_name = "stardock"
   edition = "2018"
+  with_unit_tests = true
 
   source_root = "cli/main.rs"
   deps = [
+    ":common",
+    "//sdk/fidl/fuchsia.net.http:fuchsia.net.http-rustc",
     "//sdk/fidl/fuchsia.stardock:fuchsia.stardock-rustc",
     "//src/lib/fidl/rust/fidl",
     "//src/lib/fuchsia-async",
     "//src/lib/fuchsia-component",
     "//third_party/rust_crates:anyhow",
+    "//third_party/rust_crates:clap",
+    "//third_party/rust_crates:futures",
+    "//third_party/rust_crates:lazy_static",
+    "//third_party/rust_crates:regex",
+    "//third_party/rust_crates:serde_json",
   ]
 
-  sources = [ "cli/main.rs" ]
+  test_deps = [
+    "//third_party/rust_crates:matches",
+    "//third_party/rust_crates:test-case",
+  ]
+
+  sources = [
+    "cli/image_fetcher.rs",
+    "cli/main.rs",
+  ]
 }
 
 fuchsia_shell_package("stardock_cli") {
   deps = [ ":cli_bin" ]
 }
 
+fuchsia_unittest_component("stardock-cli-tests") {
+  deps = [ ":cli_bin_test" ]
+}
+
 fuchsia_test_package("stardock-tests") {
-  test_components = [ ":stardock-common-tests" ]
+  test_components = [
+    ":stardock-cli-tests",
+    ":stardock-common-tests",
+  ]
 }
