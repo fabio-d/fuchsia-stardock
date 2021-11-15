@@ -31,6 +31,43 @@ const MAX_TAG_LENGTH uint64 = 128;
 /// first characters of exactly one full Sha256Digest.
 alias Sha256Digest = string:64;
 
+/// Image reference, to look up an image in a registry.
+///
+/// The cases of this enum closely match the syntax of the corresponding
+/// command-line argument.
+type ImageReference = strict union {
+    /// Format: "NAME:TAG"
+    1: by_name_and_tag struct {
+        name string:MAX_NAME_LENGTH;
+        tag string:MAX_TAG_LENGTH;
+    };
+
+    /// Format "NAME@sha256:DIGEST" or "NAME:TAG@sha256:DIGEST"
+    ///
+    /// DIGEST refers to the digest of the manifest. The TAG is always ignored.
+    2: by_name_and_digest struct {
+        name string:MAX_NAME_LENGTH;
+        digest Sha256Digest;
+    };
+
+    /// Formats: "NAME", "ABBREVIATED_DIGEST" or "sha256:ABBREVIATED_DIGEST".
+    ///
+    /// ABBREVIATED_DIGEST refers to the digest of the image.
+    ///
+    /// NOTE: Some strings (such as "1234") are inherently ambiguous with
+    /// respect to whether they refer to a NAME or an ABBREVIATED_DIGEST.
+    3: by_name_or_image_id struct {
+        text string:MAX_NAME_LENGTH;
+        search_domain ImageReferenceAmbiguityType;
+    };
+};
+
+type ImageReferenceAmbiguityType = strict enum {
+    NAME_ONLY = 1;
+    IMAGE_ID_ONLY = 2;
+    NAME_OR_IMAGE_ID = 3;
+};
+
 /// Root interface of the stardock_manager component.
 @discoverable
 protocol Manager {
