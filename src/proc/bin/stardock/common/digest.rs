@@ -51,7 +51,7 @@ impl FromStr for Sha256Digest {
 }
 
 /// Helper function that checks whether all characters in a str are 0-9 or a-f
-fn is_lowercase_hex_string(text: &str) -> bool {
+pub(crate) fn is_lowercase_hex_string(text: &str) -> bool {
     lazy_static! {
         static ref RE: Regex = Regex::new(r"^[0-9a-f]*$").unwrap();
     }

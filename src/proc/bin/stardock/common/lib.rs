@@ -3,3 +3,4 @@
 // found in the LICENSE file.
 
 pub mod digest;
+pub mod image_reference;
