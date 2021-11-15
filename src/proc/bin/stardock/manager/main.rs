@@ -9,6 +9,7 @@ use futures::StreamExt;
 use log::{error, info};
 use std::rc::Rc;
 
+mod image;
 mod manager;
 
 #[fasync::run_singlethreaded]

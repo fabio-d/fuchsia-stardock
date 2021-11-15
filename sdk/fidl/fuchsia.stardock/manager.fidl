@@ -11,6 +11,8 @@
 
 library fuchsia.stardock;
 
+using zx;
+
 // Reference: https://github.com/moby/moby/issues/10392
 const MAX_NAME_LENGTH uint64 = 255;
 
@@ -71,9 +73,43 @@ type ImageReferenceAmbiguityType = strict enum {
 /// Root interface of the stardock_manager component.
 @discoverable
 protocol Manager {
-    Hello(struct {
-        text string:128;
-    }) -> (struct {
-        text string:128;
+    /// Obtain an handle to an image.
+    ///
+    /// If an ImageReference is provided, it will be used to try to locate the
+    /// image in the local registry.
+    ///
+    /// If no ImageReference is provided, or if the image is not locally
+    /// available, the manager will use the provided ImageFetcher to try to
+    /// import it in the registry (this step is skipped if no ImageFetcher is
+    /// provided).
+    ///
+    /// On success a handle to the image is returned, or none if the image could
+    /// not be located/fetched successfully.
+    OpenImage(resource struct {
+        image_reference ImageReference:optional;
+        image_fetcher client_end:<ImageFetcher, optional>;
+    }) -> (resource struct {
+        image_handle client_end:<Image, optional>;
+    });
+};
+
+/// A reference to an image in the local registry.
+protocol Image {
+    // TODO
+};
+
+
+/// Image fetcher.
+///
+/// It is used to retrieve images to be imported into the local registry.
+protocol ImageFetcher {
+    FetchManifest() -> (resource struct {
+        data zx.handle:<SOCKET, optional>;
+    });
+
+    FetchBlob(struct {
+        digest Sha256Digest;
+    }) -> (resource struct {
+        data zx.handle:<SOCKET, optional>;
     });
 };
