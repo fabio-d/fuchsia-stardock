@@ -8,16 +8,26 @@ use futures::TryStreamExt;
 use log::{error, info};
 use stardock_common::image_reference;
 use std::borrow::Borrow;
+use std::cell::RefCell;
+use std::path::Path;
 use std::rc::Rc;
 
 use crate::image;
 
-pub struct Manager {}
+pub struct Manager {
+    image_registry: RefCell<image::ImageRegistry>,
+}
 
 impl Manager {
-    pub fn new() -> Rc<Manager> {
-        let manager = Manager {};
-        Rc::new(manager)
+    pub fn new(storage_path: &Path) -> Result<Rc<Manager>, Error> {
+        if !storage_path.is_dir() {
+            anyhow::bail!("Storage directory {} does not exist", storage_path.display());
+        }
+
+        let manager =
+            Manager { image_registry: RefCell::new(image::ImageRegistry::new(&storage_path)?) };
+
+        Ok(Rc::new(manager))
     }
 
     async fn open_image(
@@ -31,7 +41,10 @@ impl Manager {
 
         // If an image_fetcher was given by the client, try to fetch the image
         if let Some(image_fetcher) = image_fetcher {
-            let result = image::ImageRegistry::fetch_image(&image_fetcher).await;
+            let result = image::ImageRegistry::fetch_image(
+                &self.image_registry,
+                &image_fetcher,
+            ).await;
 
             if let Err(err) = result {
                 error!("Failed to fetch image: {}", err);
