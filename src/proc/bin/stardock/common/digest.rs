@@ -5,6 +5,7 @@
 use anyhow::Error;
 use lazy_static::lazy_static;
 use regex::Regex;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::str::FromStr;
 
 /// A sha256 digest. Exactly 64 characters long.
@@ -47,6 +48,26 @@ impl FromStr for Sha256Digest {
         } else {
             Ok(Self { digest: s.to_string() })
         }
+    }
+}
+
+impl Serialize for Sha256Digest {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let s = format!("sha256:{}", self.as_str());
+        serializer.serialize_str(&s)
+    }
+}
+
+impl<'de> Deserialize<'de> for Sha256Digest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Sha256Digest::from_str_with_prefix(&s).map_err(serde::de::Error::custom)
     }
 }
 
@@ -131,5 +152,22 @@ mod tests {
     #[test_case("abc\n" => false)]
     fn is_lowercase_hex_string_expect(text: &str) -> bool {
         is_lowercase_hex_string(text)
+    }
+
+    #[test]
+    fn serde() {
+        let text = "da42a055f277cb4acbe7c9a077dac41a6486579b5cd30d1a3e1ae17a884f5d95";
+        let digest = Sha256Digest { digest: text.to_string() };
+        let expected_json = format!("\"sha256:{}\"", text);
+
+        assert_eq!(
+            serde_json::to_string(&digest).expect("Serialization failed"),
+            expected_json
+        );
+
+        assert_eq!(
+            serde_json::from_str::<Sha256Digest>(&expected_json).expect("Deserialization failed"),
+            digest
+        );
     }
 }

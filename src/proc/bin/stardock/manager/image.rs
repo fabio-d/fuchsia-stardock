@@ -7,8 +7,8 @@ use fidl_fuchsia_stardock as fstardock;
 use fuchsia_async as fasync;
 use futures::io::AsyncReadExt;
 use log::info;
-use serde_json::Value;
-use stardock_common::digest;
+
+use crate::serde_types;
 
 pub struct Image {
     // TODO: not implemented yet
@@ -32,21 +32,28 @@ impl ImageRegistry {
             // FIXME: this reads the socket into an unbounded buffer, potentially exhausting this
             // process' memory
             fasync::Socket::from_socket(manifest_response)?.read_to_end(&mut data).await?;
-            serde_json::from_slice::<Value>(&data)?
+            serde_json::from_slice::<serde_types::ManifestV2>(&data)?
         };
 
         info!("Fetched manifest {:?}", manifest);
 
-        let config = manifest["config"].as_object().ok_or(anyhow::anyhow!("Missing config object"))?;
-        let digest = config["digest"].as_str().ok_or(anyhow::anyhow!("Missing digest string"))?;
-        let digest = digest::Sha256Digest::from_str_with_prefix(digest)?;
-        image_fetcher.fetch_blob(digest.as_str()).await?;
+        let config_digest = &manifest.config.digest;
+        let configuration_response = image_fetcher.fetch_blob(config_digest.as_str()).await?
+            .ok_or_else(|| anyhow::anyhow!("Client failed to fetch image configuration"))?;
 
-        let layers = manifest["layers"].as_array().ok_or(anyhow::anyhow!("Missing layers array"))?;
-        for layer in layers {
-            let layer = layer.as_object().ok_or(anyhow::anyhow!("Invalid layer object"))?;
-            let digest = layer["digest"].as_str().ok_or(anyhow::anyhow!("Missing digest string"))?;
-            let digest = digest::Sha256Digest::from_str_with_prefix(digest)?;
+        // Read and parse configuration as JSON
+        let configuration = {
+            let mut data = Vec::new();
+            // FIXME: this reads the socket into an unbounded buffer, potentially exhausting this
+            // process' memory
+            fasync::Socket::from_socket(configuration_response)?.read_to_end(&mut data).await?;
+            info!("DATA: {:?}", String::from_utf8(data.clone()));
+            serde_json::from_slice::<serde_types::ImageV1>(&data)?
+        };
+
+        info!("Fetched configuration {:?}", configuration);
+
+        for serde_types::ManifestV2Layer { digest, .. } in manifest.layers {
             image_fetcher.fetch_blob(digest.as_str()).await?;
         }
 
