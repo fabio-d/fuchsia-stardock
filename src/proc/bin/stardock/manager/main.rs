@@ -7,6 +7,7 @@ use fuchsia_async as fasync;
 use fuchsia_component::server::ServiceFs;
 use futures::StreamExt;
 use log::{error, info};
+use std::path::Path;
 use std::rc::Rc;
 
 mod image;
@@ -18,7 +19,7 @@ async fn main() -> Result<(), Error> {
     diagnostics_log::init!(&[&"stardock-manager"]);
     info!("starting");
 
-    let manager = manager::Manager::new();
+    let manager = manager::Manager::new(Path::new("/data"))?;
     let mut fs = ServiceFs::new_local();
 
     fs.dir("svc").add_fidl_service(|stream| {
