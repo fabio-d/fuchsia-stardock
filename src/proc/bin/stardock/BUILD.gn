@@ -30,11 +30,13 @@ rustc_library("common") {
     "//third_party/rust_crates:anyhow",
     "//third_party/rust_crates:lazy_static",
     "//third_party/rust_crates:regex",
+    "//third_party/rust_crates:serde",
   ]
 
   test_deps = [
     "//src/lib/fuchsia",
     "//third_party/rust_crates:matches",
+    "//third_party/rust_crates:serde_json",
     "//third_party/rust_crates:test-case",
   ]
 
@@ -64,6 +66,7 @@ rustc_binary("manager_bin") {
     "//third_party/rust_crates:anyhow",
     "//third_party/rust_crates:futures",
     "//third_party/rust_crates:log",
+    "//third_party/rust_crates:serde",
     "//third_party/rust_crates:serde_json",
   ]
 
@@ -71,6 +74,7 @@ rustc_binary("manager_bin") {
     "manager/image.rs",
     "manager/main.rs",
     "manager/manager.rs",
+    "manager/serde_types.rs",
   ]
 }
 

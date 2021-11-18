@@ -11,6 +11,7 @@ use std::rc::Rc;
 
 mod image;
 mod manager;
+mod serde_types;
 
 #[fasync::run_singlethreaded]
 async fn main() -> Result<(), Error> {
