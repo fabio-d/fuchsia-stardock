@@ -10,6 +10,12 @@
     capabilities: [
         { protocol: "fuchsia.stardock.Manager" },
     ],
+    use: [
+        {
+            storage: "data",
+            path: "/data",
+        },
+    ],
     expose: [
         {
             protocol: "fuchsia.stardock.Manager",

@@ -554,6 +554,11 @@
             ],
         },
         {
+            storage: "data",
+            from: "self",
+            to: "#stardock_manager",
+        },
+        {
             directory: "config-data",
             from: "parent",
             to: "#hwinfo",
