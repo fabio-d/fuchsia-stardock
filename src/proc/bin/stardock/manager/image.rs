@@ -49,21 +49,15 @@ impl ImageRegistry {
     pub async fn fetch_image(
         image_registry: &RefCell<ImageRegistry>,
         image_fetcher: &fstardock::ImageFetcherProxy,
+        expected_manifest_digest: Option<&digest::Sha256Digest>,
     ) -> Result<(), Error> {
         // Create our copy of the blobs_dir to avoid keeping the image_registry borrowed while
         // waiting
         let blobs_dir = image_registry.borrow().blobs_dir.to_owned();
 
         // Download and parse manifest JSON blob
-        let manifest_response = image_fetcher.fetch_manifest().await?
-            .ok_or_else(|| anyhow::anyhow!("Client failed to fetch manifest"))?;
-        let manifest = {
-            let mut data = Vec::new();
-            // FIXME: this reads the socket into an unbounded buffer, potentially exhausting this
-            // process' memory
-            fasync::Socket::from_socket(manifest_response)?.read_to_end(&mut data).await?;
-            serde_json::from_slice::<serde_types::ManifestV2>(&data)?
-        };
+        let manifest = download_manifest(&image_fetcher, expected_manifest_digest)
+            .await.context("Failed to fetch manifest")?;
 
         info!("Fetched manifest {:?}", manifest);
 
@@ -104,6 +98,33 @@ impl ImageRegistry {
 
         Ok(())
     }
+}
+
+/// Download, (optionally) verify and parse a manifest.
+async fn download_manifest(
+    image_fetcher: &fstardock::ImageFetcherProxy,
+    expected_digest: Option<&digest::Sha256Digest>,
+) -> Result<serde_types::ManifestV2, Error> {
+    let response = image_fetcher.fetch_manifest().await?
+        .ok_or_else(|| anyhow::anyhow!("Client failed to fetch manifest"))?;
+
+    let mut data = Vec::new();
+    // FIXME: this reads the socket into an unbounded buffer, potentially exhausting this
+    // process' memory
+    fasync::Socket::from_socket(response)?.read_to_end(&mut data).await?;
+
+    let manifest = serde_json::from_slice::<serde_types::ManifestV2>(&data)?;
+
+    if let Some(expected_digest) = expected_digest {
+        let actual_digest = hex::encode(sha2::Sha256::digest(&data))
+            .parse::<digest::Sha256Digest>().unwrap();
+
+        if actual_digest != *expected_digest {
+            anyhow::bail!("Manifest digest mismatch");
+        }
+    }
+
+    Ok(manifest)
 }
 
 /// Download and verify a blob into a temporary file.
