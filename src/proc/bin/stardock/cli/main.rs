@@ -81,7 +81,19 @@ async fn do_pull(
     let image_reference = image.parse::<image_reference::ImageReference>()?;
 
     if let Some((fetcher_client_end, fetcher_done_fut)) = make_fetcher(&image_reference) {
-        let open_image_fut = manager.open_image(None, Some(fetcher_client_end));
+        // We do not propagate the requested image reference and, instead, set None because we
+        // always want to attempt to (re)download the image, even if it already exists locally
+        // (because a newer online version might be available). The only exception is when the user
+        // requests a specific digest, which, by definition, cannot be modified online.
+        let mut loose_image_reference_fidl = match image_reference {
+            image_reference::ImageReference::ByNameAndDigest(_, _) =>
+                Some(image_reference.to_fidl()),
+            _ =>
+                None,
+        };
+
+        let open_image_fut =
+            manager.open_image(loose_image_reference_fidl.as_mut(), Some(fetcher_client_end));
 
         // Serve fetcher and collect result
         let (open_image_result, _) = futures::join!(open_image_fut, fetcher_done_fut);

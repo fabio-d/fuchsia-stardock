@@ -35,15 +35,20 @@ impl Manager {
         image_reference: Option<image_reference::ImageReference>,
         image_fetcher: Option<fstardock::ImageFetcherProxy>,
     ) -> Option<Rc<image::Image>> {
-        // Searching in the local registry is not implemented yet: the image reference value is
-        // currently ignored
-        std::mem::drop(image_reference);
+        // Searching in the local registry is not implemented yet; therefore, the image reference
+        // value is ignored unless it is a manifest digest, which can already be used to validate
+        // the manifest to be downloaded
+        let expected_manifest_digest = match &image_reference {
+            Some(image_reference::ImageReference::ByNameAndDigest(_, digest)) => Some(digest),
+            _ => None,
+        };
 
         // If an image_fetcher was given by the client, try to fetch the image
         if let Some(image_fetcher) = image_fetcher {
             let result = image::ImageRegistry::fetch_image(
                 &self.image_registry,
                 &image_fetcher,
+                expected_manifest_digest,
             ).await;
 
             if let Err(err) = result {
