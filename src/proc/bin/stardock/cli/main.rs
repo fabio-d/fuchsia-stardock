@@ -30,6 +30,14 @@ fn app<'a, 'b>() -> App<'a, 'b> {
                 .takes_value(true),
             ),
         )
+        .subcommand(SubCommand::with_name("create")
+            .about("Create a container")
+            .arg(Arg::with_name("IMAGE")
+                .help("Image reference, format: IMAGE_ID or NAME[:TAG|@sha256:DIGEST]")
+                .required(true)
+                .takes_value(true),
+            ),
+        )
 }
 
 /// Start an ImageFetcher server that can fetch the requested image and return its client end.
@@ -74,6 +82,41 @@ fn make_fetcher(
     return Some((client, done_fut));
 }
 
+/// Get an image handle, fetching the image from the remote registry if it is not present.
+async fn open_image(
+    manager: &fstardock::ManagerProxy,
+    image: &str,
+) -> Result<fstardock::ImageProxy, Error> {
+    let image_reference = image.parse::<image_reference::ImageReference>()?;
+
+    let open_image_result =
+        if let Some((fetcher_client_end, fetcher_done_fut)) = make_fetcher(&image_reference) {
+            let open_image_fut =
+                manager.open_image(Some(&mut image_reference.to_fidl()), Some(fetcher_client_end));
+
+            // Serve fetcher and collect result
+            futures::join!(open_image_fut, fetcher_done_fut).0
+        } else {
+            manager.open_image(Some(&mut image_reference.to_fidl()), None).await
+        };
+
+    if let Some(image) = open_image_result? {
+        Ok(image.into_proxy()?)
+    } else {
+        anyhow::bail!("Failed to find the requested image");
+    }
+}
+
+/// Create a new container backed by the requested image.
+async fn create_container(
+    manager: &fstardock::ManagerProxy,
+    image: &str,
+) -> Result<fstardock::ContainerProxy, Error> {
+    let image = open_image(manager, image).await?;
+    let container = image.create_container().await?.into_proxy()?;
+    Ok(container)
+}
+
 async fn do_pull(
     manager: &fstardock::ManagerProxy,
     image: &str,
@@ -111,6 +154,19 @@ async fn do_pull(
     Ok(())
 }
 
+async fn do_create(
+    manager: &fstardock::ManagerProxy,
+    image: &str,
+) -> Result<(), Error> {
+    // Create new container
+    let container = create_container(manager, image).await?;
+
+    // Print container ID
+    println!("{}", container.get_container_id().await?);
+
+    Ok(())
+}
+
 #[fasync::run_singlethreaded]
 async fn main() -> Result<(), Error> {
     let args = app().get_matches();
@@ -121,6 +177,9 @@ async fn main() -> Result<(), Error> {
     match args.subcommand() {
         ("pull", Some(cmd)) => {
             do_pull(&manager, cmd.value_of("IMAGE").unwrap()).await
+        }
+        ("create", Some(cmd)) => {
+            do_create(&manager, cmd.value_of("IMAGE").unwrap()).await
         }
         (_, _) => {
             // clap never returns invalid subcommands
