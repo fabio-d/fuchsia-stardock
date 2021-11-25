@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 use anyhow::Error;
-use fidl::endpoints::create_request_stream;
+use fidl::endpoints::{create_request_stream, ClientEnd};
 use fidl_fuchsia_stardock as fstardock;
 use fuchsia_async as fasync;
 use futures::TryStreamExt;
@@ -14,10 +14,12 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 
+use crate::container;
 use crate::image;
 
 pub struct Manager {
     image_registry: RefCell<image::ImageRegistry>,
+    container_registry: RefCell<container::ContainerRegistry>,
 }
 
 impl Manager {
@@ -26,8 +28,10 @@ impl Manager {
             anyhow::bail!("Storage directory {} does not exist", storage_path.display());
         }
 
-        let manager =
-            Manager { image_registry: RefCell::new(image::ImageRegistry::new(&storage_path)?) };
+        let manager = Manager {
+            image_registry: RefCell::new(image::ImageRegistry::new(&storage_path)?),
+            container_registry: RefCell::new(container::ContainerRegistry::new()),
+        };
 
         Ok(Rc::new(manager))
     }
@@ -60,6 +64,24 @@ impl Manager {
         }
 
         return None;
+    }
+
+    fn make_container_handle(
+        self: &Rc<Manager>,
+        container: Rc<container::Container>,
+    ) -> ClientEnd<fstardock::ContainerMarker> {
+        let (client, request_stream) =
+            create_request_stream::<fstardock::ContainerMarker>().unwrap();
+
+        let manager = Rc::clone(&self);
+        fasync::Task::local(async move {
+            if let Err(e) = manager.handle_container(container, request_stream).await {
+                error!("Manager::handle_container error: {:?}", e);
+            }
+        })
+        .detach();
+
+        client
     }
 
     pub async fn handle_client(
@@ -114,6 +136,31 @@ impl Manager {
             match request {
                 fstardock::ImageRequest::GetImageId { responder } => {
                     responder.send(&image.id().as_str())?;
+                }
+                fstardock::ImageRequest::CreateContainer { responder } => {
+                    let container =
+                        self.container_registry.borrow_mut().create_container(Rc::clone(&image));
+
+                    responder.send(self.make_container_handle(container))?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn handle_container(
+        self: Rc<Manager>,
+        container: Rc<container::Container>,
+        mut stream: fstardock::ContainerRequestStream,
+    ) -> Result<(), Error> {
+        while let Some(request) = stream.try_next().await? {
+            match request {
+                fstardock::ContainerRequest::GetContainerId { responder } => {
+                    responder.send(&container.id().as_str())?;
+                }
+                fstardock::ContainerRequest::GetImageId { responder } => {
+                    responder.send(&container.image_id().as_str())?;
                 }
             }
         }

@@ -99,6 +99,26 @@ protocol Image {
     GetImageId() -> (struct {
         digest Sha256Digest;
     });
+
+    /// Create a new container backed by the current image.
+    ///
+    /// TODO: add support for overriding command line
+    CreateContainer() -> (resource struct {
+        container_handle client_end:Container;
+    });
+};
+
+/// A reference to a container.
+protocol Container {
+    /// Query container ID.
+    GetContainerId() -> (struct {
+        digest Sha256Digest;
+    });
+
+    /// Query image ID.
+    GetImageId() -> (struct {
+        digest Sha256Digest;
+    });
 };
 
 /// Image fetcher.

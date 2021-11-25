@@ -68,6 +68,7 @@ rustc_binary("manager_bin") {
     "//third_party/rust_crates:futures",
     "//third_party/rust_crates:hex",
     "//third_party/rust_crates:log",
+    "//third_party/rust_crates:rand",
     "//third_party/rust_crates:serde",
     "//third_party/rust_crates:serde_json",
     "//third_party/rust_crates:sha2",
@@ -75,6 +76,7 @@ rustc_binary("manager_bin") {
   ]
 
   sources = [
+    "manager/container.rs",
     "manager/image.rs",
     "manager/main.rs",
     "manager/manager.rs",
