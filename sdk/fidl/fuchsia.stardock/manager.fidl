@@ -95,9 +95,11 @@ protocol Manager {
 
 /// A reference to an image in the local registry.
 protocol Image {
-    // TODO
+    /// Query image ID.
+    GetImageId() -> (struct {
+        digest Sha256Digest;
+    });
 };
-
 
 /// Image fetcher.
 ///
