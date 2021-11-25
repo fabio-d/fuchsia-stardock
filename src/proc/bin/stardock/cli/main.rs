@@ -98,8 +98,9 @@ async fn do_pull(
         // Serve fetcher and collect result
         let (open_image_result, _) = futures::join!(open_image_fut, fetcher_done_fut);
 
-        if let Some(_image) = open_image_result? {
-            println!("Success!"); // TODO: print image ID instead
+        if let Some(image) = open_image_result? {
+            // Print image ID
+            println!("{}", image.into_proxy()?.get_image_id().await?);
         } else {
             anyhow::bail!("Failed to pull the requested image");
         }
