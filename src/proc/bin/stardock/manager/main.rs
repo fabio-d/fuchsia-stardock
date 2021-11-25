@@ -10,6 +10,7 @@ use log::{error, info};
 use std::path::Path;
 use std::rc::Rc;
 
+mod container;
 mod image;
 mod manager;
 mod serde_types;
