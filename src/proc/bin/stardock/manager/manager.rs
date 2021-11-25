@@ -3,9 +3,11 @@
 // found in the LICENSE file.
 
 use anyhow::Error;
+use fidl::endpoints::create_request_stream;
 use fidl_fuchsia_stardock as fstardock;
+use fuchsia_async as fasync;
 use futures::TryStreamExt;
-use log::{error, info};
+use log::error;
 use stardock_common::image_reference;
 use std::borrow::Borrow;
 use std::cell::RefCell;
@@ -51,10 +53,9 @@ impl Manager {
                 expected_manifest_digest,
             ).await;
 
-            if let Err(err) = result {
-                error!("Failed to fetch image: {}", err);
-            } else {
-                info!("Image was fetched correctly, but nothing else is implemented yet");
+            match result {
+                Ok(image) => return Some(image),
+                Err(err) => error!("Failed to fetch image: {}", err),
             }
         }
 
@@ -81,11 +82,38 @@ impl Manager {
                     };
 
                     // Fetch/open image and return a handle on success
-                    if let Some(_image) = self.open_image(image_reference, image_fetcher).await {
-                        anyhow::bail!("Returning an image handle is not implemented yet");
+                    if let Some(image) = self.open_image(image_reference, image_fetcher).await {
+                        let (client, request_stream) =
+                            create_request_stream::<fstardock::ImageMarker>().unwrap();
+
+                        let manager = Rc::clone(&self);
+                        fasync::Task::local(async move {
+                            if let Err(e) = manager.handle_image(image, request_stream).await {
+                                error!("Manager::handle_image error: {:?}", e);
+                            }
+                        })
+                        .detach();
+
+                        responder.send(Some(client))?;
                     } else {
                         responder.send(None)?;
                     }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn handle_image(
+        self: Rc<Manager>,
+        image: Rc<image::Image>,
+        mut stream: fstardock::ImageRequestStream,
+    ) -> Result<(), Error> {
+        while let Some(request) = stream.try_next().await? {
+            match request {
+                fstardock::ImageRequest::GetImageId { responder } => {
+                    responder.send(&image.id().as_str())?;
                 }
             }
         }
