@@ -25,6 +25,7 @@ static CONTAINER_COLLECTION_NAME: &str = "container";
 pub struct Container {
     id: digest::Sha256Digest,
     image: Rc<image::Image>,
+    run_mutex: futures::lock::Mutex<()>,
 }
 
 #[derive(Debug)]
@@ -42,7 +43,11 @@ impl Container {
     }
 
     pub async fn run(&self) -> Result<(), Error> {
-        // TODO: prevent multiple running instances of the same container
+        // Prevent multiple running instances of the same container
+        let run_guard = self.run_mutex.try_lock();
+        if run_guard.is_none() {
+            anyhow::bail!("Container {} is already running", self.id.as_str());
+        }
 
         let realm = connect_to_protocol::<fcomponent::RealmMarker>()
             .expect("failed to obtain Realm proxy");
@@ -101,7 +106,8 @@ impl ContainerRegistry {
 
         info!("Creating container {} from image {}", id.as_str(), image.id().as_str());
 
-        let result = Rc::new(Container { id: id.clone(), image });
+        let result =
+            Rc::new(Container { id: id.clone(), image, run_mutex: futures::lock::Mutex::new(()) });
         self.containers.insert(id, Rc::clone(&result));
 
         result
