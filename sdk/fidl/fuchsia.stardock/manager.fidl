@@ -91,6 +91,17 @@ protocol Manager {
     }) -> (resource struct {
         image_handle client_end:<Image, optional>;
     });
+
+    /// Obtain an handle to an existing container.
+    ///
+    /// If the requested container cannot be found, no handle is returned.
+    ///
+    /// TODO: add support for abbreviated digests and container names
+    OpenContainer(resource struct {
+        container_id Sha256Digest;
+    }) -> (resource struct {
+        container_handle client_end:<Container, optional>;
+    });
 };
 
 /// A reference to an image in the local registry.
