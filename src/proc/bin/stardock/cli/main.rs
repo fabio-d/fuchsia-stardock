@@ -46,6 +46,14 @@ fn app<'a, 'b>() -> App<'a, 'b> {
                 .takes_value(true),
             ),
         )
+        .subcommand(SubCommand::with_name("run")
+            .about("Create and start a container")
+            .arg(Arg::with_name("IMAGE")
+                .help("Image reference, format: IMAGE_ID or NAME[:TAG|@sha256:DIGEST]")
+                .required(true)
+                .takes_value(true),
+            ),
+        )
 }
 
 /// Start an ImageFetcher server that can fetch the requested image and return its client end.
@@ -199,6 +207,19 @@ async fn do_start(
     Ok(())
 }
 
+async fn do_run(
+    manager: &fstardock::ManagerProxy,
+    image: &str,
+) -> Result<(), Error> {
+    // Create new container
+    let container = create_container(manager, image).await?;
+
+    // Run it
+    container.run().await?;
+
+    Ok(())
+}
+
 #[fasync::run_singlethreaded]
 async fn main() -> Result<(), Error> {
     let args = app().get_matches();
@@ -215,6 +236,9 @@ async fn main() -> Result<(), Error> {
         }
         ("start", Some(cmd)) => {
             do_start(&manager, cmd.value_of("CONTAINER").unwrap()).await
+        }
+        ("run", Some(cmd)) => {
+            do_run(&manager, cmd.value_of("IMAGE").unwrap()).await
         }
         (_, _) => {
             // clap never returns invalid subcommands
