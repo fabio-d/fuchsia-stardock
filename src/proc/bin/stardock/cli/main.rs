@@ -38,6 +38,14 @@ fn app<'a, 'b>() -> App<'a, 'b> {
                 .takes_value(true),
             ),
         )
+        .subcommand(SubCommand::with_name("start")
+            .about("Start a container")
+            .arg(Arg::with_name("CONTAINER")
+                .help("Container reference, format: CONTAINER_ID or NAME")
+                .required(true)
+                .takes_value(true),
+            ),
+        )
 }
 
 /// Start an ImageFetcher server that can fetch the requested image and return its client end.
@@ -117,6 +125,17 @@ async fn create_container(
     Ok(container)
 }
 
+/// Open the container identified by the given container reference string.
+async fn open_container(
+    manager: &fstardock::ManagerProxy,
+    container: &str,
+) -> Result<fstardock::ContainerProxy, Error> {
+    match manager.open_container(&container).await? {
+        Some(handle) => Ok(handle.into_proxy()?),
+        None => anyhow::bail!("Failed to find the requested container"),
+    }
+}
+
 async fn do_pull(
     manager: &fstardock::ManagerProxy,
     image: &str,
@@ -167,6 +186,18 @@ async fn do_create(
     Ok(())
 }
 
+async fn do_start(
+    manager: &fstardock::ManagerProxy,
+    container: &str,
+) -> Result<(), Error> {
+    // Open existing container
+    let _ = open_container(manager, container).await?;
+
+    // TODO: run the container
+
+    Ok(())
+}
+
 #[fasync::run_singlethreaded]
 async fn main() -> Result<(), Error> {
     let args = app().get_matches();
@@ -180,6 +211,9 @@ async fn main() -> Result<(), Error> {
         }
         ("create", Some(cmd)) => {
             do_create(&manager, cmd.value_of("IMAGE").unwrap()).await
+        }
+        ("start", Some(cmd)) => {
+            do_start(&manager, cmd.value_of("CONTAINER").unwrap()).await
         }
         (_, _) => {
             // clap never returns invalid subcommands

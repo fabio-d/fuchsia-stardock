@@ -8,7 +8,7 @@ use fidl_fuchsia_stardock as fstardock;
 use fuchsia_async as fasync;
 use futures::TryStreamExt;
 use log::error;
-use stardock_common::image_reference;
+use stardock_common::{digest, image_reference};
 use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::path::Path;
@@ -117,6 +117,17 @@ impl Manager {
                         .detach();
 
                         responder.send(Some(client))?;
+                    } else {
+                        responder.send(None)?;
+                    }
+                }
+                fstardock::ManagerRequest::OpenContainer { container_id, responder } => {
+                    let container_id = container_id.parse::<digest::Sha256Digest>()?;
+                    let container = self.container_registry.borrow().open_container(&container_id);
+
+                    if let Some(container) = container {
+                        let handle = self.make_container_handle(container);
+                        responder.send(Some(handle))?;
                     } else {
                         responder.send(None)?;
                     }
