@@ -56,4 +56,11 @@ impl ContainerRegistry {
 
         result
     }
+
+    pub fn open_container(
+        &self,
+        id: &digest::Sha256Digest,
+    ) -> Option<Rc<Container>> {
+        self.containers.get(id).map(Rc::clone)
+    }
 }
