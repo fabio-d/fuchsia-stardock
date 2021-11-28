@@ -554,6 +554,11 @@
             ],
         },
         {
+            runner: "starnix",
+            from: "#starnix_manager",
+            to: "#stardock_manager",
+        },
+        {
             storage: "data",
             from: "self",
             to: "#stardock_manager",

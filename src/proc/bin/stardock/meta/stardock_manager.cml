@@ -7,10 +7,21 @@
         runner: "elf",
         binary: "bin/stardock-manager",
     },
+    collections: [
+        {
+            name: "container",
+            environment: "#container-environment",
+            durability: "single_run",
+        },
+    ],
     capabilities: [
         { protocol: "fuchsia.stardock.Manager" },
     ],
     use: [
+        {
+            protocol: "fuchsia.component.Realm",
+            from: "framework",
+        },
         {
             storage: "data",
             path: "/data",
@@ -20,6 +31,18 @@
         {
             protocol: "fuchsia.stardock.Manager",
             from: "self",
+        },
+    ],
+    environments: [
+        {
+            name: "container-environment",
+            extends: "realm",
+            runners: [
+                {
+                    runner: "starnix",
+                    from: "parent",
+                },
+            ],
         },
     ],
 }

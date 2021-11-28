@@ -191,9 +191,10 @@ async fn do_start(
     container: &str,
 ) -> Result<(), Error> {
     // Open existing container
-    let _ = open_container(manager, container).await?;
+    let container = open_container(manager, container).await?;
 
-    // TODO: run the container
+    // Run it
+    container.run().await?;
 
     Ok(())
 }
