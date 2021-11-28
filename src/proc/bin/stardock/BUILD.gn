@@ -11,6 +11,7 @@ group("stardock") {
     ":stardock_cli",
     ":stardock_package",
     "//src/proc/bin/starnix",
+    "//src/proc/examples/hello_starnix:hello-starnix",
   ]
 }
 
@@ -58,11 +59,16 @@ rustc_binary("manager_bin") {
   source_root = "manager/main.rs"
   deps = [
     ":common",
+    "//sdk/fidl/fuchsia.component:fuchsia.component-rustc",
+    "//sdk/fidl/fuchsia.component.decl:fuchsia.component.decl-rustc",
+    "//sdk/fidl/fuchsia.process:fuchsia.process-rustc",
     "//sdk/fidl/fuchsia.stardock:fuchsia.stardock-rustc",
+    "//sdk/fidl/fuchsia.starnix.developer:fuchsia.starnix.developer-rustc",
     "//src/lib/diagnostics/log/rust",
     "//src/lib/fidl/rust/fidl",
     "//src/lib/fuchsia-async",
     "//src/lib/fuchsia-component",
+    "//src/lib/fuchsia-runtime",
     "//third_party/rust_crates:anyhow",
     "//third_party/rust_crates:flate2",
     "//third_party/rust_crates:futures",

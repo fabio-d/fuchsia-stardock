@@ -130,6 +130,11 @@ protocol Container {
     GetImageId() -> (struct {
         digest Sha256Digest;
     });
+
+    /// Start container, run a command in it, and wait until it exits.
+    ///
+    /// TODO: add support for stdio forwarding
+    Run() -> ();
 };
 
 /// Image fetcher.
