@@ -42,7 +42,12 @@ impl Container {
         self.image.id()
     }
 
-    pub async fn run(&self) -> Result<(), Error> {
+    pub async fn run(
+        &self,
+        stdin: fidl::Socket,
+        stdout: fidl::Socket,
+        stderr: fidl::Socket,
+    ) -> Result<(), Error> {
         // Prevent multiple running instances of the same container
         let run_guard = self.run_mutex.try_lock();
         if run_guard.is_none() {
@@ -57,6 +62,18 @@ impl Container {
 
         let args = fcomponent::CreateChildArgs {
             numbered_handles: Some(vec![
+                fprocess::HandleInfo {
+                    handle: stdin.into_handle(),
+                    id: HandleInfo::new(HandleType::FileDescriptor, 0).as_raw(),
+                },
+                fprocess::HandleInfo {
+                    handle: stdout.into_handle(),
+                    id: HandleInfo::new(HandleType::FileDescriptor, 1).as_raw(),
+                },
+                fprocess::HandleInfo {
+                    handle: stderr.into_handle(),
+                    id: HandleInfo::new(HandleType::FileDescriptor, 2).as_raw(),
+                },
                 fprocess::HandleInfo {
                     handle: server.into_channel().into_handle(),
                     id: HandleInfo::new(HandleType::User0, 0).as_raw(),

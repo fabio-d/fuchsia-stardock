@@ -13,6 +13,7 @@ use stardock_common::image_reference;
 use std::pin::Pin;
 
 mod image_fetcher;
+mod stdio_forwarder;
 
 // These are hardcoded at the moment. Maybe someday we will support other registries
 static REGISTRY_URL: &str = "https://registry.hub.docker.com";
@@ -202,7 +203,7 @@ async fn do_start(
     let container = open_container(manager, container).await?;
 
     // Run it
-    container.run().await?;
+    stdio_forwarder::run_container_with_stdio(&container).await?;
 
     Ok(())
 }
@@ -215,7 +216,7 @@ async fn do_run(
     let container = create_container(manager, image).await?;
 
     // Run it
-    container.run().await?;
+    stdio_forwarder::run_container_with_stdio(&container).await?;
 
     Ok(())
 }
