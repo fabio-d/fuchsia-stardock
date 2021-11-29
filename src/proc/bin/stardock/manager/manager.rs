@@ -173,10 +173,10 @@ impl Manager {
                 fstardock::ContainerRequest::GetImageId { responder } => {
                     responder.send(&container.image_id().as_str())?;
                 }
-                fstardock::ContainerRequest::Run { responder } => {
+                fstardock::ContainerRequest::Run { stdin, stdout, stderr, responder } => {
                     let container = Rc::clone(&container);
                     fasync::Task::local(async move {
-                        if let Err(e) = container.run().await {
+                        if let Err(e) = container.run(stdin, stdout, stderr).await {
                             error!("Container::run error: {:?}", e);
                         }
 

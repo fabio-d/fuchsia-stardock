@@ -133,8 +133,12 @@ protocol Container {
 
     /// Start container, run a command in it, and wait until it exits.
     ///
-    /// TODO: add support for stdio forwarding
-    Run() -> ();
+    /// The type of the stdio handles matches the type expected by starnix (sockets).
+    Run(resource struct {
+        stdin zx.handle:SOCKET;
+        stdout zx.handle:SOCKET;
+        stderr zx.handle:SOCKET;
+    }) -> ();
 };
 
 /// Image fetcher.
