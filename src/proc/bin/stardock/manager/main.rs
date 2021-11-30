@@ -34,6 +34,17 @@ async fn main() -> Result<(), Error> {
         .detach();
     });
 
+    fs.dir("svc").add_fidl_service(|stream| {
+        let manager = Rc::clone(&manager);
+
+        fasync::Task::local(async move {
+            if let Err(e) = manager.handle_resolver(stream).await {
+                error!("Manager::handle_resolver error: {:?}", e);
+            }
+        })
+        .detach();
+    });
+
     fs.take_and_serve_directory_handle()?;
     fs.collect::<()>().await;
 

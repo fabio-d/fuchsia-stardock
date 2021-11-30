@@ -11,7 +11,6 @@ group("stardock") {
     ":stardock_cli",
     ":stardock_package",
     "//src/proc/bin/starnix",
-    "//src/proc/examples/hello_starnix:hello-starnix",
   ]
 }
 
@@ -59,11 +58,16 @@ rustc_binary("manager_bin") {
   source_root = "manager/main.rs"
   deps = [
     ":common",
+    "//garnet/lib/rust/io_util",
     "//sdk/fidl/fuchsia.component:fuchsia.component-rustc",
     "//sdk/fidl/fuchsia.component.decl:fuchsia.component.decl-rustc",
+    "//sdk/fidl/fuchsia.data:fuchsia.data-rustc",
+    "//sdk/fidl/fuchsia.io:fuchsia.io-rustc",
+    "//sdk/fidl/fuchsia.mem:fuchsia.mem-rustc",
     "//sdk/fidl/fuchsia.process:fuchsia.process-rustc",
     "//sdk/fidl/fuchsia.stardock:fuchsia.stardock-rustc",
     "//sdk/fidl/fuchsia.starnix.developer:fuchsia.starnix.developer-rustc",
+    "//sdk/fidl/fuchsia.sys2:fuchsia.sys2-rustc",
     "//src/lib/diagnostics/log/rust",
     "//src/lib/fidl/rust/fidl",
     "//src/lib/fuchsia-async",
@@ -73,8 +77,10 @@ rustc_binary("manager_bin") {
     "//third_party/rust_crates:flate2",
     "//third_party/rust_crates:futures",
     "//third_party/rust_crates:hex",
+    "//third_party/rust_crates:lazy_static",
     "//third_party/rust_crates:log",
     "//third_party/rust_crates:rand",
+    "//third_party/rust_crates:regex",
     "//third_party/rust_crates:serde",
     "//third_party/rust_crates:serde_json",
     "//third_party/rust_crates:sha2",
