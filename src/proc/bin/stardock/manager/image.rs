@@ -61,6 +61,10 @@ impl Image {
 }
 
 impl Blob {
+    pub fn digest(&self) -> &digest::Sha256Digest {
+        &self.digest
+    }
+
     pub fn link_at(&self, dest_dir: &Path) {
         let mut dest_path = dest_dir.to_path_buf();
         dest_path.push(self.digest.as_str());

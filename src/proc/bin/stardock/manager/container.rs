@@ -3,12 +3,16 @@
 // found in the LICENSE file.
 
 use anyhow::{Context as _, Error};
-use fidl::endpoints::{create_proxy, Proxy};
+use fidl::endpoints::{create_proxy, ClientEnd, Proxy};
 use fidl::HandleBased;
 use fidl_fuchsia_component as fcomponent;
 use fidl_fuchsia_component_decl as fdecl;
+use fidl_fuchsia_data as fdata;
+use fidl_fuchsia_io as fio;
+use fidl_fuchsia_mem as fmem;
 use fidl_fuchsia_process as fprocess;
 use fidl_fuchsia_starnix_developer as fstardev;
+use fidl_fuchsia_sys2 as fsys;
 use fuchsia_component::client::connect_to_protocol;
 use fuchsia_runtime::{HandleInfo, HandleType};
 use log::info;
@@ -26,6 +30,7 @@ static CONTAINER_COLLECTION_NAME: &str = "container";
 pub struct Container {
     id: digest::Sha256Digest,
     image: Rc<image::Image>,
+    container_dir: Box<Path>,
     run_mutex: futures::lock::Mutex<()>,
 }
 
@@ -36,8 +41,12 @@ pub struct ContainerRegistry {
 }
 
 impl Container {
-    fn new(id: &digest::Sha256Digest, image: Rc<image::Image>) -> Container {
-        Container { id: id.clone(), image, run_mutex: futures::lock::Mutex::new(()) }
+    fn new(
+        id: &digest::Sha256Digest,
+        image: Rc<image::Image>,
+        container_dir: Box<Path>,
+    ) -> Container {
+        Container { id: id.clone(), image, container_dir, run_mutex: futures::lock::Mutex::new(()) }
     }
 
     pub fn id(&self) -> &digest::Sha256Digest {
@@ -46,6 +55,64 @@ impl Container {
 
     pub fn image_id(&self) -> &digest::Sha256Digest {
         self.image.id()
+    }
+
+    pub fn build_url(&self) -> String {
+        format!("stardock://{}", self.id.as_str())
+    }
+
+    pub fn build_component(&self) -> fsys::Component {
+        let layers = self.image.layers();
+        if layers.len() != 1 {
+            unimplemented!("Images with more than one layer are not supported yet");
+        }
+
+        let url = self.build_url();
+        let package_dir = io_util::directory::open_in_namespace(
+            self.container_dir.to_str().expect("container_dir contains invalid characters"),
+            fio::OPEN_RIGHT_READABLE,
+        ).unwrap().into_channel().unwrap().into_zx_channel();
+
+        let program_info = vec![
+            fdata::DictionaryEntry {
+                key: "binary".to_string(),
+                value: Some(Box::new(fdata::DictionaryValue::Str("/bin/sh".to_string()))),
+            },
+            fdata::DictionaryEntry {
+                key: "mounts".to_string(),
+                value: Some(Box::new(fdata::DictionaryValue::StrVec(vec![
+                    format!("/:tarfs:{}", layers[0].digest().as_str()),
+                    "/dev:devfs".to_string(),
+                    "/tmp:tmpfs".to_string(),
+                    "/proc:proc".to_string(),
+                ]))),
+            },
+        ];
+
+        let mut decl = fdecl::Component {
+            program: Some(fdecl::Program {
+                runner: Some("starnix".to_string()),
+                info: Some(fdata::Dictionary {
+                    entries: Some(program_info),
+                    ..fdata::Dictionary::EMPTY
+                }),
+                ..fdecl::Program::EMPTY
+            }),
+            ..fdecl::Component::EMPTY
+        };
+
+        let package = fsys::Package {
+            package_url: Some(url.clone()),
+            package_dir: Some(ClientEnd::from(package_dir)),
+            ..fsys::Package::EMPTY
+        };
+
+        fsys::Component {
+            resolved_url: Some(url),
+            decl: Some(fmem::Data::Bytes(fidl::encoding::encode_persistent(&mut decl).unwrap())),
+            package: Some(package),
+            ..fsys::Component::EMPTY
+        }
     }
 
     pub async fn run(
@@ -90,7 +157,7 @@ impl Container {
 
         let child_decl = fdecl::Child {
             name: Some(self.id.as_str().to_string()),
-            url: Some("fuchsia-pkg://fuchsia.com/hello-starnix#meta/hello_starnix.cm".to_string()),
+            url: Some(self.build_url()),
             startup: Some(fdecl::StartupMode::Lazy),
             ..fdecl::Child::EMPTY
         };
@@ -149,7 +216,7 @@ impl ContainerRegistry {
             layer.link_at(&container_dir);
         }
 
-        let result = Rc::new(Container::new(&id, image));
+        let result = Rc::new(Container::new(&id, image, container_dir.into_boxed_path()));
         self.containers.insert(id, Rc::clone(&result));
 
         result

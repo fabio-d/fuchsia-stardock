@@ -5,6 +5,7 @@
 use anyhow::Error;
 use fidl::endpoints::{create_request_stream, ClientEnd};
 use fidl_fuchsia_stardock as fstardock;
+use fidl_fuchsia_sys2 as fsys;
 use fuchsia_async as fasync;
 use futures::TryStreamExt;
 use log::error;
@@ -13,6 +14,8 @@ use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
+use lazy_static::lazy_static;
+use regex::Regex;
 
 use crate::container;
 use crate::image;
@@ -189,4 +192,47 @@ impl Manager {
 
         Ok(())
     }
+
+    pub async fn handle_resolver(
+        self: Rc<Manager>,
+        mut stream: fsys::ComponentResolverRequestStream,
+    ) -> Result<(), Error> {
+
+        while let Some(request) = stream.try_next().await? {
+            match request {
+                fsys::ComponentResolverRequest::Resolve { component_url, responder } => {
+                    let mut result =
+                        if let Ok(container_id) = extract_digest_from_stardock_url(&component_url) {
+                            let container =
+                                self.container_registry.borrow().open_container(&container_id);
+                            if let Some(container) = container {
+                                Ok(container.build_component())
+                            } else {
+                                Err(fsys::ResolverError::ResourceUnavailable)
+                            }
+                        } else {
+                            Err(fsys::ResolverError::InvalidArgs)
+                        };
+
+                    responder.send(&mut result)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn extract_digest_from_stardock_url(url: &str) -> Result<digest::Sha256Digest, Error> {
+    lazy_static! {
+        static ref RE: Regex = Regex::new(r"^stardock://([0-9a-f]{64})$").unwrap();
+    }
+
+    if let Some(captures) = RE.captures(url) {
+        if let Some(group) = captures.get(1) {
+            return Ok(group.as_str().parse().unwrap());
+        }
+    }
+
+    anyhow::bail!("Invalid stardock URL");
 }
