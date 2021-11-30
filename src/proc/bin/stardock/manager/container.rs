@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use anyhow::Error;
+use anyhow::{Context as _, Error};
 use fidl::endpoints::{create_proxy, Proxy};
 use fidl::HandleBased;
 use fidl_fuchsia_component as fcomponent;
@@ -15,6 +15,7 @@ use log::info;
 use rand::Rng;
 use stardock_common::digest;
 use std::collections::HashMap;
+use std::path::Path;
 use std::rc::Rc;
 
 use crate::image;
@@ -30,10 +31,15 @@ pub struct Container {
 
 #[derive(Debug)]
 pub struct ContainerRegistry {
+    containers_dir: Box<Path>, // where containers are stored
     containers: HashMap<digest::Sha256Digest, Rc<Container>>,
 }
 
 impl Container {
+    fn new(id: &digest::Sha256Digest, image: Rc<image::Image>) -> Container {
+        Container { id: id.clone(), image, run_mutex: futures::lock::Mutex::new(()) }
+    }
+
     pub fn id(&self) -> &digest::Sha256Digest {
         &self.id
     }
@@ -104,10 +110,22 @@ impl Container {
 }
 
 impl ContainerRegistry {
-    pub fn new() -> ContainerRegistry {
-        ContainerRegistry {
-            containers: HashMap::new(), // TODO: load from storage
+    pub fn new(storage_path: &Path) -> Result<ContainerRegistry, Error> {
+        // Create "containers" subdirectory if it does not exist
+        let mut containers_dir = storage_path.to_path_buf();
+        containers_dir.push("containers");
+        if !containers_dir.is_dir() {
+            std::fs::create_dir(&containers_dir).context("Failed to create containers directory")?;
         }
+
+        // TODO: remove orphan files (e.g. leftovers from a past crash)
+
+        let result = ContainerRegistry {
+            containers_dir: containers_dir.into_boxed_path(),
+            containers: HashMap::new(), // TODO: load from storage
+        };
+
+        Ok(result)
     }
 
     pub fn create_container(
@@ -123,8 +141,15 @@ impl ContainerRegistry {
 
         info!("Creating container {} from image {}", id.as_str(), image.id().as_str());
 
-        let result =
-            Rc::new(Container { id: id.clone(), image, run_mutex: futures::lock::Mutex::new(()) });
+        // Create and populate container directory with hard links to the layer blobs
+        let mut container_dir = self.containers_dir.to_path_buf();
+        container_dir.push(id.as_str());
+        std::fs::create_dir(&container_dir).expect("Failed to create container directory");
+        for layer in image.layers() {
+            layer.link_at(&container_dir);
+        }
+
+        let result = Rc::new(Container::new(&id, image));
         self.containers.insert(id, Rc::clone(&result));
 
         result

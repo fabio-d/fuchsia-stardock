@@ -30,7 +30,7 @@ impl Manager {
 
         let manager = Manager {
             image_registry: RefCell::new(image::ImageRegistry::new(&storage_path)?),
-            container_registry: RefCell::new(container::ContainerRegistry::new()),
+            container_registry: RefCell::new(container::ContainerRegistry::new(&storage_path)?),
         };
 
         Ok(Rc::new(manager))

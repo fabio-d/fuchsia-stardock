@@ -27,8 +27,9 @@ pub struct Image {
 }
 
 #[derive(Debug)]
-struct Blob {
+pub struct Blob {
     digest: digest::Sha256Digest,
+    file_path: Box<Path>,
 }
 
 #[derive(Debug)]
@@ -52,6 +53,20 @@ enum NewLayerData {
 impl Image {
     pub fn id(&self) -> &digest::Sha256Digest {
         &self.config_blob.digest
+    }
+
+    pub fn layers(&self) -> &[Rc<Blob>] {
+        &self.layers
+    }
+}
+
+impl Blob {
+    pub fn link_at(&self, dest_dir: &Path) {
+        let mut dest_path = dest_dir.to_path_buf();
+        dest_path.push(self.digest.as_str());
+
+        std::fs::hard_link(self.file_path.to_owned(), dest_path)
+            .expect("Failed to create hard link to blob");
     }
 }
 
@@ -264,7 +279,7 @@ impl ImageRegistry {
         }
 
         info!("Persisted temporary file {} as {}", tmppath.display(), newpath.display());
-        Blob { digest: digest.clone() }
+        Blob { digest: digest.clone(), file_path: newpath.into_boxed_path() }
     }
 }
 
