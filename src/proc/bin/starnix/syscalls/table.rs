@@ -176,6 +176,7 @@ pub fn dispatch_syscall(
         uname[1],
         unlink[1],
         unlinkat[3],
+        vfork[0],
         wait4[4],
         waitid[4],
         write[3],

@@ -41,6 +41,20 @@ pub fn sys_clone(
     Ok(tid.into())
 }
 
+pub fn sys_vfork(current_task: &CurrentTask) -> Result<SyscallResult, Errno> {
+    // The vfork manual page says that an implementation in which vfork is the same as fork is
+    // compliant: so, let's fork!
+    let new_task =
+        current_task.clone_task(uapi::SIGCHLD as u64, UserRef::default(), UserRef::default())?;
+    let tid = new_task.id;
+
+    let mut registers = current_task.registers;
+    registers.rax = 0;
+
+    spawn_task(new_task, registers, |_| {});
+    Ok(tid.into())
+}
+
 fn read_c_string_vector(
     mm: &MemoryManager,
     user_vector: UserRef<UserCString>,
