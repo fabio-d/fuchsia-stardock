@@ -59,13 +59,16 @@ pub fn start_component(
     info!("start_component environment: {:?}", environ);
 
     let kernel_name = if let Some(ref url) = start_info.resolved_url {
-        let url = fuchsia_url::pkg_url::PkgUrl::parse(&url)?;
-        let name = url.resource().unwrap_or(url.name().as_ref());
-        CString::new(if let Some(i) = name.rfind('/') { &name[i + 1..] } else { name })
+        if let Ok(url) = fuchsia_url::pkg_url::PkgUrl::parse(&url) {
+            let name = url.resource().unwrap_or(url.name().as_ref());
+            Some(CString::new(if let Some(i) = name.rfind('/') { &name[i + 1..] } else { name }))
+        } else {
+            None
+        }
     } else {
-        CString::new("kernel")
-    }?;
-    let mut kernel = Kernel::new(&kernel_name)?;
+        None
+    };
+    let mut kernel = Kernel::new(&kernel_name.unwrap_or_else(|| CString::new("kernel"))?)?;
     kernel.cmdline = cmdline.as_bytes().to_vec();
     *kernel.outgoing_dir.lock() =
         start_info.outgoing_dir.map(|server_end| server_end.into_channel());
