@@ -55,4 +55,5 @@ pub mod proc;
 pub mod socket;
 pub mod syscalls;
 pub mod sysfs;
+pub mod tarfs;
 pub mod tmpfs;
