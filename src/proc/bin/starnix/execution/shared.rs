@@ -18,6 +18,7 @@ use crate::errno;
 use crate::from_status_like_fdio;
 use crate::fs::ext4::ExtFilesystem;
 use crate::fs::fuchsia::{create_file_from_handle, RemoteFs, SyslogFile};
+use crate::fs::tarfs::TarFilesystem;
 use crate::fs::*;
 use crate::mm::{MappingOptions, PAGE_SIZE};
 use crate::task::*;
@@ -205,6 +206,14 @@ pub fn create_filesystem_from_spec<'a>(
             let vmo =
                 syncio::directory_open_vmo(&pkg, &fs_src, fio::VMO_FLAG_READ, zx::Time::INFINITE)?;
             Fs(ExtFilesystem::new(vmo)?)
+        }
+        "tarfs" => {
+            let tar_file = {
+                let (c, s) = fidl::endpoints::create_endpoints::<fio::NodeMarker>().unwrap();
+                pkg.open(fio::OPEN_RIGHT_READABLE | fio::OPEN_FLAG_NOT_DIRECTORY, 0, &fs_src, s)?;
+                syncio::Zxio::create(c.into_handle())?
+            };
+            Fs(TarFilesystem::new(tar_file)?)
         }
         _ => create_filesystem(&kernel, fs_src.as_bytes(), fs_type.as_bytes(), b"")?,
     };

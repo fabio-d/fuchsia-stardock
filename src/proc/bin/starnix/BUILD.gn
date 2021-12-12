@@ -70,6 +70,7 @@ if (target_cpu == "x64") {
       "//third_party/rust_crates:paste",
       "//third_party/rust_crates:rand",
       "//third_party/rust_crates:scopeguard",
+      "//third_party/rust_crates:tar",
       "//third_party/rust_crates:vk-sys",
     ]
 
@@ -148,6 +149,7 @@ if (target_cpu == "x64") {
       "fs/symlink_node.rs",
       "fs/syscalls.rs",
       "fs/sysfs.rs",
+      "fs/tarfs.rs",
       "fs/tmpfs.rs",
       "fs/vmo_file.rs",
       "loader.rs",
