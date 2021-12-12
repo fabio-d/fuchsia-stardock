@@ -82,6 +82,7 @@ if (target_cpu == "x64") {
       "//third_party/rust_crates:serde",
       "//third_party/rust_crates:serde_json",
       "//third_party/rust_crates:slab",
+      "//third_party/rust_crates:tar",
       "//third_party/rust_crates:tracing",
       "//third_party/rust_crates:vk-sys",
     ]
@@ -165,6 +166,7 @@ if (target_cpu == "x64") {
       "fs/symlink_node.rs",
       "fs/syscalls.rs",
       "fs/sysfs.rs",
+      "fs/tarfs.rs",
       "fs/tmpfs.rs",
       "fs/vmo_file.rs",
       "fs/xattr.rs",

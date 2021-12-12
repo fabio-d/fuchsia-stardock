@@ -16,6 +16,7 @@ use zerocopy::AsBytes;
 
 use crate::fs::ext4::ExtFilesystem;
 use crate::fs::fuchsia::{create_file_from_handle, RemoteFs, SyslogFile};
+use crate::fs::tarfs::TarFilesystem;
 use crate::fs::*;
 use crate::mm::{DesiredAddress, MappingOptions, PAGE_SIZE};
 use crate::task::*;
@@ -204,6 +205,15 @@ pub fn create_filesystem_from_spec<'a>(
                 syncio::directory_open_vmo(&pkg, &fs_src, fio::VmoFlags::READ, zx::Time::INFINITE)
                     .context("failed to open EXT4 image file")?;
             Fs(ExtFilesystem::new(vmo)?)
+        }
+        "tarfs" => {
+            let tar_file = {
+                let (c, s) = fidl::endpoints::create_endpoints::<fio::NodeMarker>().unwrap();
+                let rights = fio::OpenFlags::RIGHT_READABLE | fio::OpenFlags::NOT_DIRECTORY;
+                pkg.open(rights, 0, &fs_src, s)?;
+                syncio::Zxio::create(c.into_handle()).context("failed to open TAR image file")?
+            };
+            Fs(TarFilesystem::new(tar_file)?)
         }
         _ => create_filesystem(&kernel, fs_src.as_bytes(), fs_type.as_bytes(), b"")?,
     };
