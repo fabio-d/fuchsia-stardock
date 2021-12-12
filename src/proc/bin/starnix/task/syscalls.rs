@@ -40,6 +40,21 @@ pub fn sys_clone(
     Ok(tid.into())
 }
 
+pub fn sys_vfork(current_task: &CurrentTask) -> Result<SyscallResult, Errno> {
+    // TODO: This implementation is equivalent to fork(). Linux implements true vfork semantics, but
+    // the vfork manual page says that an implementation in which vfork is the same as fork is
+    // compliant.
+    let mut new_task =
+        current_task.clone_task(uapi::SIGCHLD as u64, UserRef::default(), UserRef::default())?;
+    let tid = new_task.id;
+
+    new_task.registers = current_task.registers;
+    new_task.registers.rax = 0;
+
+    spawn_task(new_task, |_| {});
+    Ok(tid.into())
+}
+
 fn read_c_string_vector(
     mm: &MemoryManager,
     user_vector: UserRef<UserCString>,
