@@ -828,6 +828,17 @@ pub fn sys_dup(current_task: &CurrentTask, oldfd: FdNumber) -> Result<SyscallRes
     Ok(newfd.into())
 }
 
+pub fn sys_dup2(
+    current_task: &CurrentTask,
+    oldfd: FdNumber,
+    newfd: FdNumber,
+) -> Result<SyscallResult, Errno> {
+    if oldfd != newfd {
+        current_task.files.duplicate(oldfd, Some(newfd), FdFlags::empty())?;
+    }
+    Ok(newfd.into())
+}
+
 pub fn sys_dup3(
     current_task: &CurrentTask,
     oldfd: FdNumber,

@@ -60,6 +60,7 @@ pub fn dispatch_syscall(
         connect[3],
         dup3[3],
         dup[1],
+        dup2[2],
         epoll_create1[1],
         epoll_create[1],
         epoll_ctl[4],
