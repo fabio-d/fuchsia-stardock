@@ -387,6 +387,14 @@ pub fn sys_fstat(
     Ok(SUCCESS)
 }
 
+pub fn sys_stat(
+    current_task: &CurrentTask,
+    user_path: UserCString,
+    buffer: UserRef<stat_t>,
+) -> Result<SyscallResult, Errno> {
+    sys_newfstatat(current_task, FdNumber::AT_FDCWD, user_path, buffer, 0)
+}
+
 pub fn sys_newfstatat(
     current_task: &CurrentTask,
     dir_fd: FdNumber,
@@ -592,6 +600,14 @@ pub fn sys_renameat(
 
     DirEntry::rename(&old_parent, &old_basename, &new_parent, &new_basename)?;
     Ok(SUCCESS)
+}
+
+pub fn sys_rename(
+    current_task: &CurrentTask,
+    old_user_path: UserCString,
+    new_user_path: UserCString,
+) -> Result<SyscallResult, Errno> {
+    sys_renameat(current_task, FdNumber::AT_FDCWD, old_user_path, FdNumber::AT_FDCWD, new_user_path)
 }
 
 pub fn sys_fchmod(
