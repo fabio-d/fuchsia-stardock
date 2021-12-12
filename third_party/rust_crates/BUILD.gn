@@ -854,10 +854,8 @@ if (!(current_os == "fuchsia")) {
   }
 }
 
-if (!(current_os == "fuchsia")) {
-  group("tar") {
-    public_deps = [ ":tar-v0_4_25" ]
-  }
+group("tar") {
+  public_deps = [ ":tar-v0_4_25" ]
 }
 
 group("tempfile") {
