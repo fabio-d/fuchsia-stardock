@@ -15,6 +15,7 @@ use crate::errno;
 use crate::error;
 use crate::fd_impl_directory;
 use crate::fd_impl_nonblocking;
+use crate::fs_node_impl_symlink;
 use crate::task::{CurrentTask, EventHandler, Waiter};
 use crate::types::*;
 
@@ -85,6 +86,11 @@ impl TarFilesystem {
                         anyhow::bail!("Hard link does not refer to an already-seen file");
                     }
                 }
+                tar::EntryType::Symlink => {
+                    let symlink =
+                        TarSymlink::new(tar_entry.link_name_bytes().unwrap().into_owned());
+                    tar_fs.add_inode(TarInode::Symlink(symlink))
+                }
                 _ => {
                     unimplemented!("Tar entry type: {:?}", tar_entry.header().entry_type())
                 }
@@ -127,6 +133,10 @@ impl TarFilesystem {
                     Box::new(file.build_ops()) as Box<dyn FsNodeOps>,
                     FileMode::IFREG | FileMode::ALLOW_ALL,
                 ),
+                TarInode::Symlink(symlink) => (
+                    Box::new(symlink.build_ops()) as Box<dyn FsNodeOps>,
+                    FileMode::IFLNK | FileMode::ALLOW_ALL,
+                ),
             };
 
             let fs_node = FsNode::new(ops, fs, inode_num, mode);
@@ -146,6 +156,7 @@ impl FileSystemOps for TarFileSystemOps {}
 enum TarInode {
     Directory(Arc<TarDirectory>),
     File(Arc<TarFile>),
+    Symlink(Arc<TarSymlink>),
 }
 
 struct TarDirectory {
@@ -258,6 +269,36 @@ impl FsNodeOps for TarFileOps {
         vmo.write(&buffer, 0).unwrap();
 
         Ok(Box::new(VmoFileObject::new(Arc::new(vmo))))
+    }
+}
+
+struct TarSymlink {
+    target: FsString,
+}
+
+impl TarSymlink {
+    fn new(target: FsString) -> Arc<TarSymlink> {
+        Arc::new(TarSymlink { target })
+    }
+
+    fn build_ops(self: &Arc<TarSymlink>) -> TarSymlinkOps {
+        TarSymlinkOps { inner: Arc::clone(self) }
+    }
+}
+
+struct TarSymlinkOps {
+    inner: Arc<TarSymlink>,
+}
+
+impl FsNodeOps for TarSymlinkOps {
+    fs_node_impl_symlink!();
+
+    fn readlink(
+        &self,
+        _node: &FsNode,
+        _current_task: &CurrentTask,
+    ) -> Result<SymlinkTarget, Errno> {
+        Ok(SymlinkTarget::Path(self.inner.target.clone()))
     }
 }
 
