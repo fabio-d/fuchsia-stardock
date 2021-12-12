@@ -79,6 +79,12 @@ impl Container {
                 value: Some(Box::new(fdata::DictionaryValue::Str("/bin/sh".to_string()))),
             },
             fdata::DictionaryEntry {
+                key: "args".to_string(),
+                value: Some(Box::new(fdata::DictionaryValue::StrVec(vec![
+                    "-i".to_string(),
+                ]))),
+            },
+            fdata::DictionaryEntry {
                 key: "mounts".to_string(),
                 value: Some(Box::new(fdata::DictionaryValue::StrVec(vec![
                     format!("/:tarfs:{}", layers[0].digest().as_str()),
