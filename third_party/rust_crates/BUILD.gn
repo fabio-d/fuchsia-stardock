@@ -780,10 +780,8 @@ if (!(current_os == "fuchsia")) {
   }
 }
 
-if (!(current_os == "fuchsia")) {
-  group("tar") {
-    deps = [ ":tar-v0_4_25" ]
-  }
+group("tar") {
+  deps = [ ":tar-v0_4_25" ]
 }
 
 group("tempfile") {
