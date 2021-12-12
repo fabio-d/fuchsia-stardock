@@ -1016,6 +1016,19 @@ pub fn sys_dup(current_task: &CurrentTask, oldfd: FdNumber) -> Result<FdNumber, 
     current_task.files.duplicate(oldfd, None, FdFlags::empty())
 }
 
+pub fn sys_dup2(
+    current_task: &CurrentTask,
+    oldfd: FdNumber,
+    newfd: FdNumber,
+) -> Result<FdNumber, Errno> {
+    if oldfd != newfd {
+        sys_dup3(current_task, oldfd, newfd, 0)
+    } else {
+        current_task.files.get_fd_flags(oldfd)?; // validate fd number
+        Ok(oldfd)
+    }
+}
+
 pub fn sys_dup3(
     current_task: &CurrentTask,
     oldfd: FdNumber,
@@ -1449,7 +1462,7 @@ mod tests {
     }
 
     #[::fuchsia::test]
-    fn test_sys_dup3() -> Result<(), Errno> {
+    fn test_sys_dup2_and_dup3() -> Result<(), Errno> {
         let (_kernel, current_task) = create_kernel_and_task_with_pkgfs();
         let file_handle = current_task.open_file(b"data/testfile.txt", OpenFlags::RDONLY)?;
         let files = &current_task.files;
@@ -1460,6 +1473,10 @@ mod tests {
         assert_ne!(oldfd, newfd);
         assert!(Arc::ptr_eq(&files.get(oldfd).unwrap(), &files.get(newfd).unwrap()));
         assert_eq!(files.get_fd_flags(oldfd).unwrap(), FdFlags::empty());
+        assert_eq!(files.get_fd_flags(newfd).unwrap(), FdFlags::CLOEXEC);
+
+        // Verify that dup2 has no effect if both fd numbers are the same.
+        sys_dup2(&current_task, newfd, newfd)?;
         assert_eq!(files.get_fd_flags(newfd).unwrap(), FdFlags::CLOEXEC);
 
         assert_eq!(sys_dup3(&current_task, oldfd, oldfd, O_CLOEXEC), error!(EINVAL));
@@ -1473,7 +1490,7 @@ mod tests {
         let second_file_handle = current_task.open_file(b"data/testfile.txt", OpenFlags::RDONLY)?;
         let different_file_fd = files.add(second_file_handle)?;
         assert!(!Arc::ptr_eq(&files.get(oldfd).unwrap(), &files.get(different_file_fd).unwrap()));
-        sys_dup3(&current_task, oldfd, different_file_fd, O_CLOEXEC)?;
+        sys_dup2(&current_task, oldfd, different_file_fd)?;
         assert!(Arc::ptr_eq(&files.get(oldfd).unwrap(), &files.get(different_file_fd).unwrap()));
 
         Ok(())
