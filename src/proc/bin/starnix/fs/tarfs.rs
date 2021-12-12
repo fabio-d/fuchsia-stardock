@@ -13,6 +13,9 @@ use std::sync::RwLock;
 use super::*;
 use crate::errno;
 use crate::error;
+use crate::fd_impl_directory;
+use crate::fd_impl_nonblocking;
+use crate::task::CurrentTask;
 use crate::types::*;
 
 struct ZxioReader<'a> {
@@ -166,18 +169,57 @@ struct TarDirectoryOps {
 
 impl FsNodeOps for TarDirectoryOps {
     fn open(&self, _node: &FsNode, _flags: OpenFlags) -> Result<Box<dyn FileOps>, Errno> {
-        error!(ENOSYS)
+        Ok(Box::new(TarDirectoryFileObject { inner: Arc::clone(&self.inner) }))
     }
 
     fn lookup(&self, node: &FsNode, name: &FsStr) -> Result<FsNodeHandle, Errno> {
-        let inode_num =
-            if let Some(inode_num) = self.inner.dentries.read().unwrap().get(name) {
-                *inode_num
-            } else {
-                return error!(ENOENT);
-            };
+        let inode_num = if let Some(inode_num) = self.inner.dentries.read().unwrap().get(name) {
+            *inode_num
+        } else {
+            return error!(ENOENT);
+        };
 
         self.inner.fs.get_or_create_node(&node.fs(), inode_num)
+    }
+}
+
+struct TarDirectoryFileObject {
+    inner: Arc<TarDirectory>,
+}
+
+impl FileOps for TarDirectoryFileObject {
+    fd_impl_directory!();
+    fd_impl_nonblocking!();
+
+    fn seek(
+        &self,
+        file: &FileObject,
+        _current_task: &CurrentTask,
+        offset: off_t,
+        whence: SeekOrigin,
+    ) -> Result<off_t, Errno> {
+        file.unbounded_seek(offset, whence)
+    }
+
+    fn readdir(
+        &self,
+        file: &FileObject,
+        _current_task: &CurrentTask,
+        sink: &mut dyn DirentSink,
+    ) -> Result<(), Errno> {
+        let mut offset = file.offset.lock();
+        emit_dotdot(file, sink, &mut offset)?;
+
+        let dentries_r = self.inner.dentries.read().unwrap();
+        let iter = dentries_r.iter().skip((*offset - 2).try_into().map_err(|_| errno!(ENOMEM))?);
+
+        for (name, inode_num) in iter {
+            let next_offset = *offset + 1;
+            sink.add(*inode_num, next_offset, DirectoryEntryType::UNKNOWN, name)?;
+            *offset = next_offset;
+        }
+
+        Ok(())
     }
 }
 
@@ -248,20 +290,19 @@ fn get_or_create_parent_directory(
 
     // Lookup head
     let mut dentries_w = current_dir.dentries.write().unwrap();
-    let head_dir =
-        if let Some(inode_num) = dentries_w.get(head) {
-            let inodes_r = fs.inodes.read().unwrap();
-            if let TarInode::Directory(ref dir) = inodes_r.get(inode_num).unwrap() {
-                Arc::clone(dir)
-            } else {
-                anyhow::bail!("Cannot traverse non-directory {:?}", head);
-            }
+    let head_dir = if let Some(inode_num) = dentries_w.get(head) {
+        let inodes_r = fs.inodes.read().unwrap();
+        if let TarInode::Directory(ref dir) = inodes_r.get(inode_num).unwrap() {
+            Arc::clone(dir)
         } else {
-            let tar_directory = TarDirectory::new(Arc::clone(&fs));
-            let inode_num = fs.add_inode(TarInode::Directory(Arc::clone(&tar_directory)));
-            dentries_w.insert(head.to_owned(), inode_num);
-            tar_directory
-        };
+            anyhow::bail!("Cannot traverse non-directory {:?}", head);
+        }
+    } else {
+        let tar_directory = TarDirectory::new(Arc::clone(&fs));
+        let inode_num = fs.add_inode(TarInode::Directory(Arc::clone(&tar_directory)));
+        dentries_w.insert(head.to_owned(), inode_num);
+        tar_directory
+    };
 
     get_or_create_parent_directory(head_dir, tail)
 }
