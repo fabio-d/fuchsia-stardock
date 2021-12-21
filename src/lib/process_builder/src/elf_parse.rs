@@ -17,7 +17,7 @@ use {
     std::fmt,
     std::mem,
     thiserror::Error,
-    zerocopy::{FromBytes, LayoutVerified},
+    zerocopy::{AsBytes, FromBytes, LayoutVerified},
 };
 
 /// Possible errors that can occur during ELF parsing.
@@ -56,7 +56,7 @@ trait Validate {
 }
 
 /// ELF identity header.
-#[derive(FromBytes, Debug, Eq, PartialEq)]
+#[derive(AsBytes, FromBytes, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub struct ElfIdent {
     /// e_ident[EI_MAG0:EI_MAG3]
@@ -127,7 +127,7 @@ impl ElfIdent {
     }
 }
 
-#[derive(FromBytes, Debug, Eq, PartialEq)]
+#[derive(AsBytes, FromBytes, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub struct Elf64FileHeader {
     pub ident: ElfIdent,
@@ -176,17 +176,17 @@ pub enum ElfArchitecture {
     AARCH64 = 183,
 }
 
-const ELF_MAGIC: [u8; 4] = *b"\x7fELF";
+pub const ELF_MAGIC: [u8; 4] = *b"\x7fELF";
 
 #[cfg(target_endian = "little")]
-const NATIVE_ENCODING: ElfDataEncoding = ElfDataEncoding::LittleEndian;
+pub const NATIVE_ENCODING: ElfDataEncoding = ElfDataEncoding::LittleEndian;
 #[cfg(target_endian = "big")]
-const NATIVE_ENCODING: ElfDataEncoding = ElfDataEncoding::BigEndian;
+pub const NATIVE_ENCODING: ElfDataEncoding = ElfDataEncoding::BigEndian;
 
 #[cfg(target_arch = "x86_64")]
-const CURRENT_ARCH: ElfArchitecture = ElfArchitecture::X86_64;
+pub const CURRENT_ARCH: ElfArchitecture = ElfArchitecture::X86_64;
 #[cfg(target_arch = "aarch64")]
-const CURRENT_ARCH: ElfArchitecture = ElfArchitecture::AARCH64;
+pub const CURRENT_ARCH: ElfArchitecture = ElfArchitecture::AARCH64;
 
 impl Elf64FileHeader {
     pub fn elf_type(&self) -> Result<ElfType, u16> {
@@ -239,7 +239,7 @@ impl Validate for Elf64FileHeader {
     }
 }
 
-#[derive(FromBytes, Debug, Eq, PartialEq)]
+#[derive(AsBytes, FromBytes, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub struct Elf64ProgramHeader {
     pub segment_type: u32,

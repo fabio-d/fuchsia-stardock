@@ -315,7 +315,12 @@ fn elf_to_vmar_perm_flags(elf_flags: &elf::SegmentFlags) -> zx::VmarFlags {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, anyhow::Error};
+    use {
+        super::*,
+        anyhow::{bail, Context, Error},
+        std::mem,
+        zerocopy::AsBytes,
+    };
 
     #[test]
     fn test_vmo_name_with_prefix() -> Result<(), Error> {
@@ -352,6 +357,217 @@ mod tests {
             vmo_name_with_prefix(&max_vmo_name, max_vmo_name.to_bytes()).as_bytes(),
             max_vmo_name.to_bytes()
         );
+        Ok(())
+    }
+
+    /// Wrapper that grows the backing VMO as needed and poisons bytes that were not explicitly set.
+    struct VmoBuffer {
+        inner: zx::Vmo,
+    }
+
+    impl VmoBuffer {
+        /// Value of bytes that have not yet been written to; different than zero in order to tell
+        /// explicitly zeroed bytes (i.e. the bss section) and uninitialized bytes apart.
+        const POISON_VALUE: u8 = 0xff;
+
+        fn new() -> Result<VmoBuffer, Error> {
+            let vmo = zx::Vmo::create_with_opts(zx::VmoOptions::RESIZABLE, 0)?;
+            assert_eq!(vmo.get_size()?, 0); // No need to initialize with POISON_VALUE if empty
+
+            Ok(VmoBuffer { inner: vmo })
+        }
+
+        fn inner(&self) -> &zx::Vmo {
+            &self.inner
+        }
+
+        /// Write data at the given offset, growing the VMO if needed and poisoning padding bytes.
+        fn write(&self, offset: usize, data: &[u8]) -> Result<(), Error> {
+            let offset_end = (offset + data.len()) as u64;
+            let prev_size = self.inner.get_size()?;
+            if offset_end > prev_size {
+                self.inner.set_size(offset_end)?;
+                let new_size =
+                    self.inner.get_size().context("Failed to get new rounded up size")?;
+                self.inner.write(
+                    vec![VmoBuffer::POISON_VALUE; (new_size - prev_size) as usize].as_bytes(),
+                    prev_size,
+                )?;
+            }
+
+            self.inner.write(data, offset as u64)?;
+            Ok(())
+        }
+
+        fn fill(&self, offset: usize, length: usize, value: u8) -> Result<(), Error> {
+            self.write(offset, vec![value; length].as_bytes())
+        }
+
+        fn read(&self, offset: usize, length: usize) -> Result<Vec<u8>, Error> {
+            let offset_end = (offset + length) as u64;
+            let vmo_size = self.inner.get_size()?;
+            if offset_end <= vmo_size {
+                let mut buf = vec![0; length];
+                self.inner.read(&mut buf, offset as u64)?;
+                Ok(buf)
+            } else {
+                bail!(
+                    "Attempted to read past the end of the VmoBuffer ({:#x} > {:#x})",
+                    offset_end,
+                    vmo_size,
+                );
+            }
+        }
+    }
+
+    impl Mapper for VmoBuffer {
+        fn map(
+            &self,
+            vmar_offset: usize,
+            vmo: &zx::Vmo,
+            vmo_offset: u64,
+            length: usize,
+            _flags: zx::VmarFlags,
+        ) -> Result<usize, zx::Status> {
+            let mut buf = vec![0; length];
+            vmo.read(&mut buf, vmo_offset).unwrap();
+            self.write(vmar_offset, &buf).unwrap();
+            Ok(vmar_offset)
+        }
+    }
+
+    /// Synthetize an ELF file with the given segments and fill each of them with a different value.
+    fn build_elf_with_program_headers(
+        phdrs: &[elf::Elf64ProgramHeader],
+    ) -> Result<VmoBuffer, Error> {
+        let file_header = elf::Elf64FileHeader {
+            ident: elf::ElfIdent {
+                magic: elf::ELF_MAGIC,
+                class: elf::ElfClass::Elf64 as u8,
+                data: elf::NATIVE_ENCODING as u8,
+                version: elf::ElfVersion::Current as u8,
+                osabi: 0,
+                abiversion: 0,
+                pad: [0; 7],
+            },
+            elf_type: elf::ElfType::Executable as u16,
+            machine: elf::CURRENT_ARCH as u16,
+            version: 1,
+            entry: 0,
+            phoff: mem::size_of::<elf::Elf64FileHeader>(),
+            shoff: 0,
+            flags: 0,
+            ehsize: mem::size_of::<elf::Elf64FileHeader>() as u16,
+            phentsize: mem::size_of::<elf::Elf64ProgramHeader>() as u16,
+            phnum: phdrs.len() as u16,
+            shentsize: 0,
+            shnum: 0,
+            shstrndx: 0,
+        };
+        let headers_size = file_header.phoff + file_header.phentsize as usize * phdrs.len();
+        let buf = VmoBuffer::new()?;
+        buf.write(0, file_header.as_bytes())?;
+
+        // For each segment, write the corresponding header and fill its data with a constant value.
+        // Values are assigned starting from one (we skip zero because loaded data would otherwise
+        // be indistinguishable from the bss range).
+        for (i, phdr) in phdrs.iter().enumerate() {
+            let phdr_offset = file_header.phoff + file_header.phentsize as usize * i;
+            buf.write(phdr_offset, phdr.as_bytes())?;
+
+            // If the segment overlaps the ELF header, do not fill the overlapping portion.
+            let fill_start = std::cmp::max(headers_size, phdr.offset);
+            let fill_end = std::cmp::max(fill_start, phdr.offset + phdr.filesz as usize);
+            buf.fill(fill_start, fill_end - fill_start, (i + 1) as u8)?;
+        }
+
+        Ok(buf)
+    }
+
+    #[test]
+    fn test_map_elf_segments() -> Result<(), Error> {
+        let program_headers = vec![
+            // Eight executable pages, unaligned end
+            elf::Elf64ProgramHeader {
+                segment_type: elf::SegmentType::Load as u32,
+                flags: (elf::SegmentFlags::READ | elf::SegmentFlags::EXECUTE).bits(),
+                offset: 0,
+                vaddr: 0xA0000,
+                paddr: 0,
+                filesz: 0x7123,
+                memsz: 0x7123,
+                align: 0,
+            },
+            // Eight data pages, aligned end
+            elf::Elf64ProgramHeader {
+                segment_type: elf::SegmentType::Load as u32,
+                flags: (elf::SegmentFlags::READ | elf::SegmentFlags::WRITE).bits(),
+                offset: 0x8000,
+                vaddr: 0xA8000,
+                paddr: 0,
+                filesz: 0x8000,
+                memsz: 0x8000,
+                align: 0,
+            },
+            // One bss page, unaligned end
+            elf::Elf64ProgramHeader {
+                segment_type: elf::SegmentType::Load as u32,
+                flags: (elf::SegmentFlags::READ | elf::SegmentFlags::WRITE).bits(),
+                offset: 0,
+                vaddr: 0xB0000,
+                paddr: 0,
+                filesz: 0,
+                memsz: 0x789,
+                align: 0,
+            },
+            // Eight data+bss pages with unaligned boundary, unaligned end
+            elf::Elf64ProgramHeader {
+                segment_type: elf::SegmentType::Load as u32,
+                flags: (elf::SegmentFlags::READ | elf::SegmentFlags::WRITE).bits(),
+                offset: 0x10000,
+                vaddr: 0xB8000,
+                paddr: 0,
+                filesz: 0x4123,
+                memsz: 0x7456,
+                align: 0,
+            },
+        ];
+
+        let file_buf = build_elf_with_program_headers(&program_headers)?;
+        let elf_headers = elf::Elf64Headers::from_vmo(file_buf.inner())?;
+
+        // Load it into a mock address space.
+        let mut addrspace_buf = VmoBuffer::new()?;
+        map_elf_segments(file_buf.inner(), &elf_headers, &mut addrspace_buf, 0, 0)?;
+
+        // Compare the contents of the mock address space to the ELF file, verifying that each
+        // segment was loaded properly.
+        for phdr in elf_headers.program_headers_with_type(elf::SegmentType::Load) {
+            let data_size = phdr.filesz as usize;
+            let data_expected = file_buf.read(phdr.offset, data_size)?;
+            let data_actual = addrspace_buf.read(phdr.vaddr, data_size)?;
+            for i in 0..data_size {
+                assert!(
+                    data_expected[i] == data_actual[i],
+                    "{:#x}: {:#x} != {:#x}",
+                    phdr.vaddr + i,
+                    data_expected[i],
+                    data_actual[i],
+                );
+            }
+
+            let bss_size = (phdr.memsz - phdr.filesz) as usize;
+            let bss_actual = addrspace_buf.read(phdr.vaddr + data_size, bss_size)?;
+            for i in 0..bss_size {
+                assert!(
+                    0 == bss_actual[i],
+                    "{:#x}: 0 != {:#x}",
+                    phdr.vaddr + data_size + i,
+                    bss_actual[i],
+                );
+            }
+        }
+
         Ok(())
     }
 }
