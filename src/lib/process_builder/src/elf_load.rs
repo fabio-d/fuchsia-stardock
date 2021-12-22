@@ -215,7 +215,7 @@ pub fn map_elf_segments(
         // If the mapping size is equal in size to the data to be mapped, then nothing else to
         // do. Create the mapping and we're done with this segment.
         let flags = zx::VmarFlags::SPECIFIC | elf_to_vmar_perm_flags(&hdr.flags());
-        if map_size == vmo_size {
+        if hdr.memsz == hdr.filesz {
             mapper
                 .map(map_start, vmo_to_map, vmo_start as u64, vmo_size, flags)
                 .map_err(ElfLoadError::VmarMap)?;
@@ -529,6 +529,17 @@ mod tests {
                 paddr: 0,
                 filesz: 0x4123,
                 memsz: 0x7456,
+                align: 0,
+            },
+            // Bss within the last data page
+            elf::Elf64ProgramHeader {
+                segment_type: elf::SegmentType::Load as u32,
+                flags: (elf::SegmentFlags::READ | elf::SegmentFlags::WRITE).bits(),
+                offset: 0x18000,
+                vaddr: 0xC0000,
+                paddr: 0,
+                filesz: 0x4123,
+                memsz: 0x4880,
                 align: 0,
             },
         ];
