@@ -22,6 +22,7 @@ const READ_BUFFER_SIZE: usize = 4096;
 
 #[derive(Debug)]
 pub struct Image {
+    config: serde_types::ImageV1Config,
     config_blob: Blob,
     layers: Vec<Rc<Blob>>,
 }
@@ -53,6 +54,10 @@ enum NewLayerData {
 impl Image {
     pub fn id(&self) -> &digest::Sha256Digest {
         &self.config_blob.digest
+    }
+
+    pub fn env(&self) -> &[String] {
+        &self.config.env
     }
 
     pub fn layers(&self) -> &[Rc<Blob>] {
@@ -186,6 +191,7 @@ impl ImageRegistry {
         // this is an async function and another client might have downloaded and inserted blobs
         // since our past check. Conversely, insert_image is not async and it can check atomically.
         image_registry.borrow_mut().insert_image(
+            config.config,
             (config_digest, config_tmpfile),
             new_layers,
         )
@@ -198,6 +204,7 @@ impl ImageRegistry {
     /// will be shared with the new image.
     fn insert_image(
         &mut self,
+        config: serde_types::ImageV1Config,
         image: (&digest::Sha256Digest, NamedTempFile),
         layers: Vec<(&digest::Sha256Digest, NewLayerData)>,
     ) -> Result<Rc<Image>, Error> {
@@ -249,6 +256,7 @@ impl ImageRegistry {
         }
 
         let image_ref = Rc::new(Image {
+            config,
             config_blob: self.persist_blob(image_digest, image_tmpfile),
             layers: layers_refs,
         });
