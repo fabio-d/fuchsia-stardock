@@ -84,6 +84,10 @@ impl Container {
                 ]))),
             },
             fdata::DictionaryEntry {
+                key: "environ".to_string(),
+                value: Some(Box::new(fdata::DictionaryValue::StrVec(self.image.env().to_vec()))),
+            },
+            fdata::DictionaryEntry {
                 key: "mounts".to_string(),
                 value: Some(Box::new(fdata::DictionaryValue::StrVec(vec![
                     format!("/:tarfs:{}", layer_digests.join(":")),

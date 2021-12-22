@@ -44,8 +44,15 @@ pub struct ManifestV2Layer {
 pub struct ImageV1 {
     pub architecture: String,
     pub os: String,
+    pub config: ImageV1Config,
     #[serde(rename = "rootfs")]
     pub root_fs: ImageV1RootFs,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct ImageV1Config {
+    #[serde(default, rename = "Env")]
+    pub env: Vec<String>,
 }
 
 #[derive(Deserialize, Debug)]
