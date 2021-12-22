@@ -102,8 +102,13 @@ impl VmoFileObject {
         if want_read > MAX_LFS_FILESIZE - offset {
             return error!(EINVAL);
         }
-        let to_read =
-            if file_length < offset + want_read { file_length - offset } else { want_read };
+        let to_read = if file_length <= offset {
+            0
+        } else if file_length < offset + want_read {
+            file_length - offset
+        } else {
+            want_read
+        };
         let mut buf = vec![0u8; to_read];
         vmo.read(&mut buf[..], offset as u64).map_err(|_| errno!(EIO))?;
         // TODO(steveaustin) - write_each might might be more efficient
