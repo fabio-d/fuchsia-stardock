@@ -8,6 +8,7 @@
 #![allow(missing_docs)]
 
 use {
+    crate::util,
     bitflags::bitflags,
     fuchsia_zircon as zx,
     num_derive::FromPrimitive,
@@ -315,6 +316,22 @@ impl Validate for [Elf64ProgramHeader] {
                         ));
                     }
                     vaddr_high = hdr.vaddr + hdr.memsz as usize;
+
+                    if util::page_offset(hdr.offset) != util::page_offset(hdr.vaddr) {
+                        return Err(ElfParseError::InvalidProgramHeader(
+                            "Misaligned file offset and virtual address",
+                        ));
+                    }
+                    if hdr.filesz > hdr.memsz {
+                        return Err(ElfParseError::InvalidProgramHeader(
+                            "File size cannot be larger than memory size",
+                        ));
+                    }
+                    if hdr.flags().contains(SegmentFlags::EXECUTE) && hdr.filesz != hdr.memsz {
+                        return Err(ElfParseError::InvalidProgramHeader(
+                            "Fuchsia does not support zero-extended executable segments",
+                        ));
+                    }
                 }
                 Ok(SegmentType::GnuStack) => {
                     if hdr.flags().contains(SegmentFlags::EXECUTE) {
