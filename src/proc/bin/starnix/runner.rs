@@ -264,12 +264,13 @@ fn create_filesystem_from_spec<'a>(
             Fs(ExtFilesystem::new(vmo)?)
         }
         "tarfs" => {
-            let tar_file = {
+            let mut tar_files = Vec::new();
+            for filename in fs_src.split(':') {
                 let (c, s) = fidl::endpoints::create_endpoints::<fio::NodeMarker>().unwrap();
-                pkg.open(fio::OPEN_RIGHT_READABLE | fio::OPEN_FLAG_NOT_DIRECTORY, 0, &fs_src, s)?;
-                syncio::Zxio::create(c.into_handle())?
-            };
-            Fs(TarFilesystem::new(tar_file)?)
+                pkg.open(fio::OPEN_RIGHT_READABLE | fio::OPEN_FLAG_NOT_DIRECTORY, 0, &filename, s)?;
+                tar_files.push(syncio::Zxio::create(c.into_handle())?);
+            }
+            Fs(TarFilesystem::new(tar_files)?)
         }
         _ => create_filesystem(&kernel, fs_src.as_bytes(), fs_type.as_bytes(), b"")?,
     };
