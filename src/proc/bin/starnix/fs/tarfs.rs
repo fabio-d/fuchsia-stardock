@@ -36,13 +36,13 @@ impl<'a> std::io::Read for ZxioReader<'a> {
 }
 
 pub struct TarFilesystem {
-    tar_file: syncio::Zxio,
+    tar_files: Vec<syncio::Zxio>,
     inodes: RwLock<HashMap<ino_t, TarInode>>,
 }
 
 impl TarFilesystem {
-    pub fn new(tar_file: syncio::Zxio) -> Result<FileSystemHandle, Error> {
-        let tar_fs = Arc::new(TarFilesystem { tar_file, inodes: RwLock::new(HashMap::new()) });
+    pub fn new(tar_files: Vec<syncio::Zxio>) -> Result<FileSystemHandle, Error> {
+        let tar_fs = Arc::new(TarFilesystem { tar_files, inodes: RwLock::new(HashMap::new()) });
 
         let tar_root = TarDirectory::new(Arc::clone(&tar_fs));
         tar_fs.add_inode(TarInode::Directory(Arc::clone(&tar_root)));
@@ -50,54 +50,63 @@ impl TarFilesystem {
         let fs_handle = FileSystem::new(TarFileSystemOps);
         fs_handle.set_root(tar_root.build_ops());
 
-        let mut archive = tar::Archive::new(ZxioReader::new(&tar_fs.tar_file));
-        let mut path_to_inode = HashMap::new(); // to resolve hard links
+        for (tar_file_index, tar_file) in tar_fs.tar_files.iter().enumerate() {
+            let mut archive = tar::Archive::new(ZxioReader::new(&tar_file));
+            let mut path_to_inode = HashMap::new(); // to resolve hard links
 
-        for tar_entry in archive.entries()? {
-            let tar_entry = tar_entry?;
+            for tar_entry in archive.entries()? {
+                let tar_entry = tar_entry?;
 
-            // Split path into ancestors and name
-            let path = tar_entry.path()?;
-            let (ancestors, name) = parse_path(&path)?;
+                // Split path into ancestors and name
+                let path = tar_entry.path()?;
+                let (ancestors, name) = parse_path(&path)?;
 
-            let parent = get_or_create_parent_directory(Arc::clone(&tar_root), &ancestors)?;
-            let mut dentries_w = parent.dentries.write().unwrap();
+                let parent = get_or_create_parent_directory(Arc::clone(&tar_root), &ancestors)?;
+                let mut dentries_w = parent.dentries.write().unwrap();
 
-            // Store and resolve tar entry to inode number
-            let inode_num = match tar_entry.header().entry_type() {
-                tar::EntryType::Directory => {
-                    let dir = TarDirectory::new(Arc::clone(&tar_fs));
-                    tar_fs.add_inode(TarInode::Directory(dir))
-                }
-                tar::EntryType::Regular => {
-                    let file = TarFile::new(
-                        Arc::clone(&tar_fs),
-                        tar_entry.raw_file_position(),
-                        tar_entry.header().size()?,
-                    );
-                    tar_fs.add_inode(TarInode::File(file))
-                }
-                tar::EntryType::Link => {
-                    let inode_num =
-                        path_to_inode.get(&tar_entry.link_name_bytes().unwrap().into_owned());
-                    if let Some(inode_num) = inode_num {
-                        *inode_num
-                    } else {
-                        anyhow::bail!("Hard link does not refer to an already-seen file");
+                // Store and resolve tar entry to inode number
+                let inode_num = match tar_entry.header().entry_type() {
+                    tar::EntryType::Directory => {
+                        if dentries_w.contains_key(name) {
+                            // Do not overwite existing directory from a previous layer. By keeping
+                            // it, this layer's files will be merged into it.
+                            continue;
+                        }
+
+                        let dir = TarDirectory::new(Arc::clone(&tar_fs));
+                        tar_fs.add_inode(TarInode::Directory(dir))
                     }
-                }
-                tar::EntryType::Symlink => {
-                    let symlink =
-                        TarSymlink::new(tar_entry.link_name_bytes().unwrap().into_owned());
-                    tar_fs.add_inode(TarInode::Symlink(symlink))
-                }
-                _ => {
-                    unimplemented!("Tar entry type: {:?}", tar_entry.header().entry_type())
-                }
-            };
+                    tar::EntryType::Regular => {
+                        let file = TarFile::new(
+                            Arc::clone(&tar_fs),
+                            tar_file_index,
+                            tar_entry.raw_file_position(),
+                            tar_entry.header().size()?,
+                        );
+                        tar_fs.add_inode(TarInode::File(file))
+                    }
+                    tar::EntryType::Link => {
+                        let inode_num =
+                            path_to_inode.get(&tar_entry.link_name_bytes().unwrap().into_owned());
+                        if let Some(inode_num) = inode_num {
+                            *inode_num
+                        } else {
+                            anyhow::bail!("Hard link does not refer to an already-seen file");
+                        }
+                    }
+                    tar::EntryType::Symlink => {
+                        let symlink =
+                            TarSymlink::new(tar_entry.link_name_bytes().unwrap().into_owned());
+                        tar_fs.add_inode(TarInode::Symlink(symlink))
+                    }
+                    _ => {
+                        unimplemented!("Tar entry type: {:?}", tar_entry.header().entry_type())
+                    }
+                };
 
-            path_to_inode.insert(tar_entry.path_bytes().into_owned(), inode_num);
-            dentries_w.insert(name.to_owned(), inode_num);
+                path_to_inode.insert(tar_entry.path_bytes().into_owned(), inode_num);
+                dentries_w.insert(name.to_owned(), inode_num);
+            }
         }
 
         // These directories must always exist
@@ -236,13 +245,14 @@ impl FileOps for TarDirectoryFileObject {
 
 struct TarFile {
     fs: Arc<TarFilesystem>,
+    tar_file_index: usize,
     offset: u64,
     size: u64,
 }
 
 impl TarFile {
-    fn new(fs: Arc<TarFilesystem>, offset: u64, size: u64) -> Arc<TarFile> {
-        Arc::new(TarFile { fs, offset, size })
+    fn new(fs: Arc<TarFilesystem>, tar_file_index: usize, offset: u64, size: u64) -> Arc<TarFile> {
+        Arc::new(TarFile { fs, tar_file_index, offset, size })
     }
 
     fn build_ops(self: &Arc<TarFile>) -> TarFileOps {
@@ -257,7 +267,7 @@ struct TarFileOps {
 // based on ExtFile::open
 impl FsNodeOps for TarFileOps {
     fn open(&self, _node: &FsNode, _flags: OpenFlags) -> Result<Box<dyn FileOps>, Errno> {
-        let tar_file = &self.inner.fs.tar_file;
+        let tar_file = &self.inner.fs.tar_files[self.inner.tar_file_index];
 
         let vmo = zx::Vmo::create(self.inner.size).map_err(|_| errno!(ENOMEM))?;
 
