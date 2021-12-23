@@ -207,13 +207,17 @@ pub fn create_filesystem_from_spec<'a>(
             Fs(ExtFilesystem::new(vmo)?)
         }
         "tarfs" => {
-            let tar_file = {
+            let mut tar_files = Vec::new();
+            let rights = fio::OpenFlags::RIGHT_READABLE | fio::OpenFlags::NOT_DIRECTORY;
+            for filename in fs_src.split(':') {
                 let (c, s) = fidl::endpoints::create_endpoints::<fio::NodeMarker>().unwrap();
-                let rights = fio::OpenFlags::RIGHT_READABLE | fio::OpenFlags::NOT_DIRECTORY;
-                pkg.open(rights, 0, &fs_src, s)?;
-                syncio::Zxio::create(c.into_handle()).context("failed to open TAR image file")?
-            };
-            Fs(TarFilesystem::new(tar_file)?)
+                pkg.open(rights, 0, &filename, s)?;
+                tar_files.push(
+                    syncio::Zxio::create(c.into_handle())
+                        .context("failed to open TAR image file")?,
+                );
+            }
+            Fs(TarFilesystem::new(tar_files)?)
         }
         _ => create_filesystem(&kernel, fs_src.as_bytes(), fs_type.as_bytes(), b"")?,
     };
