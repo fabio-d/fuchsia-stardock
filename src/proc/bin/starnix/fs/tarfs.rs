@@ -35,6 +35,8 @@ impl<'a> std::io::Read for ZxioReader<'a> {
     }
 }
 
+static WHITEOUT_PREFIX: &[u8] = b".wh.";
+
 pub struct TarFilesystem {
     tar_files: Vec<syncio::Zxio>,
     inodes: RwLock<HashMap<ino_t, TarInode>>,
@@ -61,8 +63,23 @@ impl TarFilesystem {
                 let path = tar_entry.path()?;
                 let (ancestors, name) = parse_path(&path)?;
 
-                let parent = get_or_create_parent_directory(Arc::clone(&tar_root), &ancestors)?;
+                let parent = get_or_create_parent_directory(
+                    Arc::clone(&tar_root),
+                    &ancestors,
+                    tar_file_index,
+                )?;
                 let mut dentries_w = parent.dentries.write().unwrap();
+
+                // Handle whiteouts
+                if tar_file_index != 0 && name.starts_with(WHITEOUT_PREFIX) {
+                    if name == b".wh..wh..opq" || name == b".wh.__dir_opaque" {
+                        // Drop all dentries from previous tar files
+                        dentries_w.retain(|_, (i, _)| tar_file_index == *i)
+                    } else {
+                        dentries_w.remove(&name[WHITEOUT_PREFIX.len()..]);
+                    }
+                    continue;
+                }
 
                 // Store and resolve tar entry to inode number
                 let inode_num = match tar_entry.header().entry_type() {
@@ -105,14 +122,15 @@ impl TarFilesystem {
                 };
 
                 path_to_inode.insert(tar_entry.path_bytes().into_owned(), inode_num);
-                dentries_w.insert(name.to_owned(), inode_num);
+                dentries_w.insert(name.to_owned(), (tar_file_index, inode_num));
             }
         }
 
         // These directories must always exist
-        get_or_create_parent_directory(Arc::clone(&tar_root), &[b"dev"])?;
-        get_or_create_parent_directory(Arc::clone(&tar_root), &[b"proc"])?;
-        get_or_create_parent_directory(Arc::clone(&tar_root), &[b"tmp"])?;
+        let extra_tar_file_index = tar_fs.tar_files.len();
+        get_or_create_parent_directory(Arc::clone(&tar_root), &[b"dev"], extra_tar_file_index)?;
+        get_or_create_parent_directory(Arc::clone(&tar_root), &[b"proc"], extra_tar_file_index)?;
+        get_or_create_parent_directory(Arc::clone(&tar_root), &[b"tmp"], extra_tar_file_index)?;
 
         Ok(fs_handle)
     }
@@ -170,7 +188,7 @@ enum TarInode {
 
 struct TarDirectory {
     fs: Arc<TarFilesystem>,
-    dentries: RwLock<HashMap<FsString, ino_t>>,
+    dentries: RwLock<HashMap<FsString, (usize, ino_t)>>,
 }
 
 impl TarDirectory {
@@ -193,7 +211,8 @@ impl FsNodeOps for TarDirectoryOps {
     }
 
     fn lookup(&self, node: &FsNode, name: &FsStr) -> Result<FsNodeHandle, Errno> {
-        let inode_num = if let Some(inode_num) = self.inner.dentries.read().unwrap().get(name) {
+        let inode_num = if let Some((_, inode_num)) = self.inner.dentries.read().unwrap().get(name)
+        {
             *inode_num
         } else {
             return error!(ENOENT);
@@ -233,7 +252,7 @@ impl FileOps for TarDirectoryFileObject {
         let dentries_r = self.inner.dentries.read().unwrap();
         let iter = dentries_r.iter().skip((*offset - 2).try_into().map_err(|_| errno!(ENOMEM))?);
 
-        for (name, inode_num) in iter {
+        for (name, (_, inode_num)) in iter {
             let next_offset = *offset + 1;
             sink.add(*inode_num, next_offset, DirectoryEntryType::UNKNOWN, name)?;
             *offset = next_offset;
@@ -330,6 +349,7 @@ fn parse_path(path: &std::path::Path) -> Result<(Vec<&FsStr>, &FsStr), Error> {
 fn get_or_create_parent_directory(
     current_dir: Arc<TarDirectory>,
     path: &[&FsStr],
+    current_tar_file_index: usize,
 ) -> Result<Arc<TarDirectory>, Error> {
     if path.len() == 0 {
         return Ok(current_dir);
@@ -341,7 +361,11 @@ fn get_or_create_parent_directory(
 
     // Lookup head
     let mut dentries_w = current_dir.dentries.write().unwrap();
-    let head_dir = if let Some(inode_num) = dentries_w.get(head) {
+    let head_dir = if let Some((tar_file_index, inode_num)) = dentries_w.get_mut(head) {
+        // Update the existing tar_file_index to prevent the dentry from being removed should an
+        // opaque whiteout occur to its parent directory in the current tar file.
+        *tar_file_index = current_tar_file_index;
+
         let inodes_r = fs.inodes.read().unwrap();
         if let TarInode::Directory(ref dir) = inodes_r.get(inode_num).unwrap() {
             Arc::clone(dir)
@@ -351,9 +375,9 @@ fn get_or_create_parent_directory(
     } else {
         let tar_directory = TarDirectory::new(Arc::clone(&fs));
         let inode_num = fs.add_inode(TarInode::Directory(Arc::clone(&tar_directory)));
-        dentries_w.insert(head.to_owned(), inode_num);
+        dentries_w.insert(head.to_owned(), (current_tar_file_index, inode_num));
         tar_directory
     };
 
-    get_or_create_parent_directory(head_dir, tail)
+    get_or_create_parent_directory(head_dir, tail, current_tar_file_index)
 }
