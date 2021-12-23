@@ -63,9 +63,8 @@ impl Container {
 
     pub fn build_component(&self) -> fsys::Component {
         let layers = self.image.layers();
-        if layers.len() != 1 {
-            unimplemented!("Images with more than one layer are not supported yet");
-        }
+        let layer_digests: Vec<&str> =
+            layers.iter().map(|layer| layer.digest().as_str()).collect();
 
         let url = self.build_url();
         let package_dir = io_util::directory::open_in_namespace(
@@ -87,7 +86,7 @@ impl Container {
             fdata::DictionaryEntry {
                 key: "mounts".to_string(),
                 value: Some(Box::new(fdata::DictionaryValue::StrVec(vec![
-                    format!("/:tarfs:{}", layers[0].digest().as_str()),
+                    format!("/:tarfs:{}", layer_digests.join(":")),
                     "/dev:devfs".to_string(),
                     "/tmp:tmpfs".to_string(),
                     "/proc:proc".to_string(),
