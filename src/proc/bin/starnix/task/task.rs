@@ -20,7 +20,7 @@ use crate::fs::*;
 use crate::loader::*;
 use crate::mm::MemoryManager;
 use crate::not_implemented;
-use crate::signals::signal_handling::dequeue_signal;
+use crate::signals::signal_handling::deliver_signal;
 use crate::signals::types::*;
 use crate::task::*;
 use crate::types::*;
@@ -543,7 +543,7 @@ impl CurrentTask {
     {
         let old_mask = self.signals.write().set_signal_mask(signal_mask);
         let wait_result = wait_function(self);
-        dequeue_signal(self);
+        deliver_signal(self, None);
         self.signals.write().set_signal_mask(old_mask);
         wait_result
     }
