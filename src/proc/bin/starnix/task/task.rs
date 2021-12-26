@@ -52,6 +52,14 @@ impl std::ops::Deref for CurrentTask {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum ExitStatus {
+    /// Process exited cleanly.
+    Exited(u8),
+    /// Process terminated by a signal.
+    Signaled(Signal),
+}
+
 pub struct Task {
     pub id: pid_t,
 
@@ -102,8 +110,8 @@ pub struct Task {
     /// The signal this task generates on exit.
     pub exit_signal: Option<Signal>,
 
-    /// The exit code that this task exited with.
-    pub exit_code: Mutex<Option<i32>>,
+    /// What caused this task to exit.
+    pub exit_status: Mutex<Option<ExitStatus>>,
 
     /// Child tasks that have exited, but not yet been waited for.
     pub zombie_children: Mutex<Vec<ZombieTask>>,
@@ -113,7 +121,7 @@ pub struct Task {
 pub struct ZombieTask {
     pub id: pid_t,
     pub parent: pid_t,
-    pub exit_code: Option<i32>,
+    pub exit_status: ExitStatus,
     // TODO: Do we need exit_signal?
 }
 
@@ -166,7 +174,7 @@ impl Task {
             signal_actions,
             signals: Default::default(),
             exit_signal,
-            exit_code: Mutex::new(None),
+            exit_status: Mutex::new(None),
             zombie_children: Mutex::new(vec![]),
         })
     }
@@ -464,7 +472,12 @@ impl Task {
     }
 
     pub fn as_zombie(&self) -> ZombieTask {
-        ZombieTask { id: self.id, parent: self.parent, exit_code: *self.exit_code.lock() }
+        let exit_status = self.exit_status.lock().clone();
+        ZombieTask {
+            id: self.id,
+            parent: self.parent,
+            exit_status: exit_status.expect("Attempted to create zombie from a non-exited task"),
+        }
     }
 
     /// Removes and returns any zombie task with the specified `pid`, if such a zombie exists.

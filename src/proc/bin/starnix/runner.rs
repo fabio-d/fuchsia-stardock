@@ -81,9 +81,9 @@ fn read_channel_sync(chan: &zx::Channel, buf: &mut zx::MessageBuf) -> Result<(),
 ///
 /// Once this function has completed, the process' exit code (if one is available) can be read from
 /// `process_context.exit_code`.
-fn run_task(mut current_task: CurrentTask, exceptions: zx::Channel) -> Result<i32, Error> {
+fn run_task(mut current_task: CurrentTask, exceptions: zx::Channel) -> Result<ExitStatus, Error> {
     let mut buffer = zx::MessageBuf::new();
-    loop {
+    let exit_status = loop {
         read_channel_sync(&exceptions, &mut buffer)?;
 
         let info = as_exception_info(&buffer);
@@ -127,9 +127,8 @@ fn run_task(mut current_task: CurrentTask, exceptions: zx::Channel) -> Result<i3
         );
         match dispatch_syscall(&mut current_task, syscall_number, args) {
             Ok(SyscallResult::Exit(error_code)) => {
-                strace!(current_task, "-> exit {:#x}", error_code);
                 exception.set_exception_state(&ZX_EXCEPTION_STATE_THREAD_EXIT)?;
-                return Ok(error_code);
+                break ExitStatus::Exited(error_code);
             }
             Ok(SyscallResult::Success(return_value)) => {
                 strace!(current_task, "-> {:#x}", return_value);
@@ -146,10 +145,17 @@ fn run_task(mut current_task: CurrentTask, exceptions: zx::Channel) -> Result<i3
             }
         }
 
-        dequeue_signal(&mut current_task);
+        if let Some(exit_status) = dequeue_signal(&mut current_task) {
+            exception.set_exception_state(&ZX_EXCEPTION_STATE_THREAD_EXIT)?;
+            break exit_status;
+        }
+
         thread.write_state_general_regs(current_task.registers)?;
         exception.set_exception_state(&ZX_EXCEPTION_STATE_HANDLED)?;
-    }
+    };
+
+    strace!(current_task, "-> exit_status {:?}", exit_status);
+    return Ok(exit_status);
 }
 
 fn start_task(
@@ -180,10 +186,10 @@ pub fn spawn_task<F>(
     registers: zx_thread_state_general_regs_t,
     task_complete: F,
 ) where
-    F: FnOnce(Result<i32, Error>) + Send + Sync + 'static,
+    F: FnOnce(Result<ExitStatus, Error>) + Send + Sync + 'static,
 {
     std::thread::spawn(move || {
-        task_complete(|| -> Result<i32, Error> {
+        task_complete(|| -> Result<ExitStatus, Error> {
             let exceptions = start_task(&current_task, registers)?;
             run_task(current_task, exceptions)
         }());
@@ -413,7 +419,7 @@ fn start_component(
             let _ = shell_controller.close_with_epitaph(zx::Status::OK);
         }
         let _ = match result {
-            Ok(0) => controller.close_with_epitaph(zx::Status::OK),
+            Ok(ExitStatus::Exited(0)) => controller.close_with_epitaph(zx::Status::OK),
             _ => controller.close_with_epitaph(zx::Status::from_raw(
                 fcomponent::Error::InstanceDied.into_primitive() as i32,
             )),

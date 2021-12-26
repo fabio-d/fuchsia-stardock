@@ -231,7 +231,7 @@ fn action_for_signal(siginfo: &SignalInfo, sigaction: sigaction_t) -> DeliveryAc
 }
 
 /// Dequeues and handles a pending signal for `current_task`.
-pub fn dequeue_signal(current_task: &mut CurrentTask) {
+pub fn dequeue_signal(current_task: &mut CurrentTask) -> Option<ExitStatus> {
     let task = current_task.task_arc_clone();
     let mut signal_state = task.signals.write();
 
@@ -245,7 +245,15 @@ pub fn dequeue_signal(current_task: &mut CurrentTask) {
 
             DeliveryAction::Ignore => {}
 
+            DeliveryAction::Terminate | DeliveryAction::CoreDump => {
+                // TODO: CoreDump should actually produce a core dump and propagate WIFCOREDUMP
+                *current_task.exit_status.lock() = Some(ExitStatus::Signaled(siginfo.signal));
+                return Some(ExitStatus::Signaled(siginfo.signal));
+            }
+
             action => not_implemented!("Unimplemented signal delivery action {:?}", action),
         };
     }
+
+    None
 }

@@ -360,12 +360,6 @@ fn wait_on_pid(
     }
 }
 
-/// Converts the given exit code to a status code suitable for returning from wait syscalls.
-fn exit_code_to_status(exit_code: Option<i32>) -> i32 {
-    let exit_code = exit_code.expect("a process should not be exiting without an exit code");
-    (exit_code & 0xff) << 8
-}
-
 pub fn sys_waitid(
     current_task: &CurrentTask,
     id_type: u32,
@@ -397,12 +391,18 @@ pub fn sys_waitid(
     // wait_on_pid returns None if the task was not waited on. In that case, we don't write out a
     // siginfo. This seems weird but is the correct behavior according to the waitid(2) man page.
     if let Some(zombie_task) = wait_on_pid(current_task, task_selector, options)? {
-        let status = exit_code_to_status(zombie_task.exit_code);
-
         let mut siginfo = siginfo_t::default();
         siginfo.si_signo = uapi::SIGCHLD as i32;
-        siginfo.si_code = CLD_EXITED as i32;
-        siginfo.si_status = status;
+        match zombie_task.exit_status {
+            ExitStatus::Exited(exit_code) => {
+                siginfo.si_code = CLD_EXITED as i32;
+                siginfo.si_status = exit_code as i32;
+            }
+            ExitStatus::Signaled(signal) => {
+                siginfo.si_code = CLD_KILLED as i32;
+                siginfo.si_status = signal.number() as i32;
+            }
+        }
         current_task.mm.write_object(user_info, &siginfo)?;
     }
 
@@ -426,8 +426,6 @@ pub fn sys_wait4(
     };
 
     if let Some(zombie_task) = wait_on_pid(current_task, selector, options)? {
-        let status = exit_code_to_status(zombie_task.exit_code);
-
         if !user_rusage.is_null() {
             let usage = rusage::default();
             // TODO(fxb/76976): Return proper usage information.
@@ -436,8 +434,10 @@ pub fn sys_wait4(
         }
 
         if !user_wstatus.is_null() {
-            // TODO(fxb/76976): Return proper status.
-            not_implemented!("wait4 does not set signal info in wstatus");
+            let status = match zombie_task.exit_status {
+                ExitStatus::Exited(exit_code) => (exit_code as i32) << 8,
+                ExitStatus::Signaled(signal) => signal.number() as i32,
+            };
             current_task.mm.write_object(user_wstatus, &status)?;
         }
 
@@ -1052,7 +1052,7 @@ mod tests {
         assert!(
             sys_kill(&current_task, current_task.get_pid(), UncheckedSignal::from(SIGCHLD)).is_ok()
         );
-        let zombie = ZombieTask { id: 0, parent: 3, exit_code: Some(1) };
+        let zombie = ZombieTask { id: 0, parent: 3, exit_status: ExitStatus::Exited(1) };
         current_task.zombie_children.lock().push(zombie.clone());
         assert_eq!(wait_on_pid(&current_task, TaskSelector::Any, 0), Ok(Some(zombie)));
     }
