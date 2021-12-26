@@ -38,10 +38,10 @@ use crate::types::*;
 ///                    contains the exit code of the task.
 pub fn execute_task<F>(mut current_task: CurrentTask, task_complete: F)
 where
-    F: FnOnce(Result<i32, Error>) + Send + Sync + 'static,
+    F: FnOnce(Result<ExitStatus, Error>) + Send + Sync + 'static,
 {
     std::thread::spawn(move || {
-        task_complete(|| -> Result<i32, Error> {
+        task_complete(|| -> Result<ExitStatus, Error> {
             let exceptions = start_task_thread(&current_task)?;
             // Unwrap the error because if we don't, we'll panic anyway from destroying the task
             // without having previous called sys_exit(), and that will swallow the actual error.
@@ -96,9 +96,9 @@ fn start_task_thread(current_task: &CurrentTask) -> Result<zx::Channel, zx::Stat
 fn run_exception_loop(
     current_task: &mut CurrentTask,
     exceptions: zx::Channel,
-) -> Result<i32, Error> {
+) -> Result<ExitStatus, Error> {
     let mut buffer = zx::MessageBuf::new();
-    loop {
+    let exit_status = loop {
         read_channel_sync(&exceptions, &mut buffer)?;
 
         let info = as_exception_info(&buffer);
@@ -142,9 +142,8 @@ fn run_exception_loop(
         );
         match dispatch_syscall(current_task, syscall_number, args) {
             Ok(SyscallResult::Exit(error_code)) => {
-                strace!(current_task, "-> exit {:#x}", error_code);
                 exception.set_exception_state(&ZX_EXCEPTION_STATE_THREAD_EXIT)?;
-                return Ok(error_code);
+                break ExitStatus::Exited(error_code);
             }
             Ok(SyscallResult::Success(return_value)) => {
                 strace!(current_task, "-> {:#x}", return_value);
@@ -161,7 +160,10 @@ fn run_exception_loop(
             }
         }
 
-        dequeue_signal(current_task);
+        if let Some(exit_status) = dequeue_signal(current_task) {
+            exception.set_exception_state(&ZX_EXCEPTION_STATE_THREAD_EXIT)?;
+            break exit_status;
+        }
 
         // Handle the debug address after the thread is set up to continue, because
         // `set_process_debug_addr` expects the register state to be in a post-syscall state (most
@@ -170,7 +172,10 @@ fn run_exception_loop(
 
         thread.write_state_general_regs(current_task.registers)?;
         exception.set_exception_state(&ZX_EXCEPTION_STATE_HANDLED)?;
-    }
+    };
+
+    strace!(current_task, "-> exit_status {:?}", exit_status);
+    Ok(exit_status)
 }
 
 /// Creates a thread for a task with the given `parent`.

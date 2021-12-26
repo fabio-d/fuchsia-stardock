@@ -14,8 +14,8 @@ use crate::types::UserAddress;
 pub enum SyscallResult {
     /// The task exited as a result of the syscall.
     ///
-    /// The associated `i32` represents the task's exit code.
-    Exit(i32),
+    /// The associated `u8` represents the task's exit code.
+    Exit(u8),
 
     /// The syscall completed successfully. The associated `u64` is the return value from the
     /// syscall.

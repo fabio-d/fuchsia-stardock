@@ -2,6 +2,6 @@
     include: [ "//src/proc/tests/android/gvisor.shard.cml" ],
     program: {
         binary: "/data/tests/wait_test",
-        args: [ "--gunit_filter=WaitTest.WaitidOptions" ],
+        args: [ "--gunit_filter=WaitTest.SignalExit:WaitTest.WaitidOptions" ],
     },
 }

@@ -14,6 +14,7 @@ use crate::mm::*;
 use crate::not_implemented;
 use crate::strace;
 use crate::syscalls::*;
+use crate::task::ExitStatus;
 use crate::types::*;
 
 pub fn sys_clone(
@@ -51,7 +52,7 @@ pub fn sys_vfork(current_task: &CurrentTask) -> Result<SyscallResult, Errno> {
     new_task.registers = current_task.registers;
     new_task.registers.rax = 0;
 
-    spawn_task(new_task, |_| {});
+    execute_task(new_task, |_| {});
     Ok(tid.into())
 }
 
@@ -173,14 +174,16 @@ pub fn sys_getresgid(
 }
 
 pub fn sys_exit(current_task: &CurrentTask, exit_code: i32) -> Result<SyscallResult, Errno> {
+    let exit_code = exit_code as u8;
     info!(target: "exit", "{:?} exit({})", current_task, exit_code);
-    *current_task.exit_code.lock() = Some(exit_code);
+    *current_task.exit_status.lock() = Some(ExitStatus::Exited(exit_code));
     Ok(SyscallResult::Exit(exit_code))
 }
 
 pub fn sys_exit_group(current_task: &CurrentTask, exit_code: i32) -> Result<SyscallResult, Errno> {
+    let exit_code = exit_code as u8;
     info!(target: "exit", "{:?} exit_group({})", current_task, exit_code);
-    *current_task.exit_code.lock() = Some(exit_code);
+    *current_task.exit_status.lock() = Some(ExitStatus::Exited(exit_code));
     current_task.thread_group.exit();
     Ok(SyscallResult::Exit(exit_code))
 }

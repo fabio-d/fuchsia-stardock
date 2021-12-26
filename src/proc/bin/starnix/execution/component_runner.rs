@@ -161,7 +161,7 @@ pub fn start_component(
             let _ = shell_controller.close_with_epitaph(zx::Status::OK);
         }
         let _ = match result {
-            Ok(0) => controller.close_with_epitaph(zx::Status::OK),
+            Ok(ExitStatus::Exited(0)) => controller.close_with_epitaph(zx::Status::OK),
             _ => controller.close_with_epitaph(zx::Status::from_raw(
                 fcomponent::Error::InstanceDied.into_primitive() as i32,
             )),

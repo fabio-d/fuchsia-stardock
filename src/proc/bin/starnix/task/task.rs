@@ -67,6 +67,14 @@ impl std::ops::Deref for CurrentTask {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum ExitStatus {
+    /// Process exited cleanly.
+    Exited(u8),
+    /// Process terminated by a signal.
+    Signaled(Signal),
+}
+
 pub struct Task {
     pub id: pid_t,
 
@@ -120,8 +128,8 @@ pub struct Task {
     /// The signal this task generates on exit.
     pub exit_signal: Option<Signal>,
 
-    /// The exit code that this task exited with.
-    pub exit_code: Mutex<Option<i32>>,
+    /// What caused this task to exit.
+    pub exit_status: Mutex<Option<ExitStatus>>,
 
     /// Child tasks that have exited, but not yet been waited for.
     pub zombie_children: Mutex<Vec<ZombieTask>>,
@@ -132,23 +140,34 @@ pub struct ZombieTask {
     pub id: pid_t,
     pub uid: uid_t,
     pub parent: pid_t,
-    pub exit_code: i32,
+    pub exit_status: ExitStatus,
     // TODO: Do we need exit_signal?
 }
 
 impl ZombieTask {
     /// Converts the given exit code to a status code suitable for returning from wait syscalls.
     pub fn wait_status(&self) -> i32 {
-        let exit_code = self.exit_code;
-        (exit_code & 0xff) << 8
+        match self.exit_status {
+            ExitStatus::Exited(exit_code) => (exit_code as i32) << 8,
+            ExitStatus::Signaled(signal) => signal.number() as i32,
+        }
     }
 
     pub fn as_signal_info(&self) -> SignalInfo {
-        SignalInfo::new(
-            SIGCHLD,
-            CLD_EXITED,
-            SignalDetail::SigChld { pid: self.id, uid: self.uid, status: self.wait_status() },
-        )
+        let pid = self.id;
+        let uid = self.uid;
+        match self.exit_status {
+            ExitStatus::Exited(exit_code) => SignalInfo::new(
+                SIGCHLD,
+                CLD_EXITED,
+                SignalDetail::SigChld { pid, uid, status: exit_code as i32 },
+            ),
+            ExitStatus::Signaled(signal) => SignalInfo::new(
+                SIGCHLD,
+                CLD_KILLED,
+                SignalDetail::SigChld { pid, uid, status: signal.number() as i32 },
+            ),
+        }
     }
 }
 
@@ -203,7 +222,7 @@ impl Task {
             signal_actions,
             signals: Default::default(),
             exit_signal,
-            exit_code: Mutex::new(None),
+            exit_status: Mutex::new(None),
             zombie_children: Mutex::new(vec![]),
         })
     }
@@ -447,14 +466,12 @@ impl Task {
     }
 
     pub fn as_zombie(&self) -> ZombieTask {
+        let exit_status = self.exit_status.lock().clone();
         ZombieTask {
             id: self.id,
             uid: self.creds.read().uid,
             parent: self.parent,
-            exit_code: self
-                .exit_code
-                .lock()
-                .expect("a process should not be exiting without an exit code"),
+            exit_status: exit_status.expect("Attempted to create zombie from a non-exited task"),
             // TODO(tbodt): This expect condition can currently trip if the process crashes.
             // There needs to be an exit code of some kind in this case too.
         }

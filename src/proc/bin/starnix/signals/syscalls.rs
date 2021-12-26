@@ -425,8 +425,6 @@ pub fn sys_wait4(
         }
 
         if !user_wstatus.is_null() {
-            // TODO(fxb/76976): Return proper status.
-            not_implemented!("wait4 does not set signal info in wstatus");
             current_task.mm.write_object(user_wstatus, &status)?;
         }
 
@@ -1040,7 +1038,7 @@ mod tests {
         assert!(
             sys_kill(&current_task, current_task.get_pid(), UncheckedSignal::from(SIGCHLD)).is_ok()
         );
-        let zombie = ZombieTask { id: 0, uid: 0, parent: 3, exit_code: 1 };
+        let zombie = ZombieTask { id: 0, uid: 0, parent: 3, exit_status: ExitStatus::Exited(1) };
         current_task.zombie_children.lock().push(zombie.clone());
         assert_eq!(wait_on_pid(&current_task, TaskSelector::Any, 0), Ok(Some(zombie)));
     }
