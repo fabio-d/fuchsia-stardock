@@ -230,13 +230,17 @@ fn action_for_signal(siginfo: &SignalInfo, sigaction: sigaction_t) -> DeliveryAc
     }
 }
 
-/// Dequeues and handles a pending signal for `current_task`.
-pub fn dequeue_signal(current_task: &mut CurrentTask) -> Option<ExitStatus> {
+/// Either dequeue a pending signal for `current_task` or inject one to be processed immediately.
+pub fn deliver_signal(
+    current_task: &mut CurrentTask,
+    injected_signal: Option<SignalInfo>,
+) -> Option<ExitStatus> {
     let task = current_task.task_arc_clone();
     let mut signal_state = task.signals.write();
 
     let mask = signal_state.mask;
-    if let Some(siginfo) = signal_state.take_next_allowed_by_mask(mask) {
+    let siginfo = injected_signal.or_else(|| signal_state.take_next_allowed_by_mask(mask));
+    if let Some(siginfo) = siginfo {
         let sigaction = task.signal_actions.get(siginfo.signal);
         match action_for_signal(&siginfo, sigaction) {
             DeliveryAction::CallHandler => {

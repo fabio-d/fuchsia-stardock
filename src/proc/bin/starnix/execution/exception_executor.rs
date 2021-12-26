@@ -8,7 +8,8 @@ use anyhow::Error;
 use fuchsia_zircon::{
     self as zx, sys::zx_exception_info_t, sys::ZX_EXCEPTION_STATE_HANDLED,
     sys::ZX_EXCEPTION_STATE_THREAD_EXIT, sys::ZX_EXCEPTION_STATE_TRY_NEXT,
-    sys::ZX_EXCP_POLICY_CODE_BAD_SYSCALL, sys::ZX_EXCP_POLICY_ERROR, AsHandleRef, Task as zxTask,
+    sys::ZX_EXCP_FATAL_PAGE_FAULT, sys::ZX_EXCP_POLICY_CODE_BAD_SYSCALL, sys::ZX_EXCP_POLICY_ERROR,
+    AsHandleRef, Task as zxTask,
 };
 use log::info;
 use std::ffi::CString;
@@ -18,8 +19,8 @@ use std::sync::Arc;
 use super::shared::*;
 use crate::errno;
 use crate::from_status_like_fdio;
-use crate::mm::MemoryManager;
-use crate::signals::signal_handling::*;
+use crate::mm::{MemoryManager, PageFaultAccessType, PageFaultViolationType};
+use crate::signals::{signal_handling::*, SignalInfo};
 use crate::strace;
 use crate::syscalls::decls::SyscallDecl;
 use crate::syscalls::table::dispatch_syscall;
@@ -105,12 +106,6 @@ fn run_exception_loop(
         assert!(buffer.n_handles() == 1);
         let exception = zx::Exception::from(buffer.take_handle(0).unwrap());
 
-        if info.type_ != ZX_EXCP_POLICY_ERROR {
-            info!("exception type: 0x{:x}", info.type_);
-            exception.set_exception_state(&ZX_EXCEPTION_STATE_TRY_NEXT)?;
-            continue;
-        }
-
         let thread = exception.get_thread()?;
         assert!(
             thread.get_koid() == current_task.thread.get_koid(),
@@ -118,60 +113,117 @@ fn run_exception_loop(
         );
 
         let report = thread.get_exception_report()?;
-        if report.context.synth_code != ZX_EXCP_POLICY_CODE_BAD_SYSCALL {
-            info!("exception synth_code: {}", report.context.synth_code);
-            exception.set_exception_state(&ZX_EXCEPTION_STATE_TRY_NEXT)?;
-            continue;
+        match info.type_ {
+            ZX_EXCP_POLICY_ERROR => {
+                if report.context.synth_code != ZX_EXCP_POLICY_CODE_BAD_SYSCALL {
+                    info!("exception synth_code: {}", report.context.synth_code);
+                    exception.set_exception_state(&ZX_EXCEPTION_STATE_TRY_NEXT)?;
+                    continue;
+                }
+
+                let syscall_number = report.context.synth_data as u64;
+                current_task.registers = thread.read_state_general_regs()?;
+
+                let regs = &current_task.registers;
+                let args = (regs.rdi, regs.rsi, regs.rdx, regs.r10, regs.r8, regs.r9);
+                strace!(
+                    current_task,
+                    "{}({:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x})",
+                    SyscallDecl::from_number(syscall_number).name,
+                    args.0,
+                    args.1,
+                    args.2,
+                    args.3,
+                    args.4,
+                    args.5
+                );
+                match dispatch_syscall(current_task, syscall_number, args) {
+                    Ok(SyscallResult::Exit(error_code)) => {
+                        exception.set_exception_state(&ZX_EXCEPTION_STATE_THREAD_EXIT)?;
+                        break ExitStatus::Exited(error_code);
+                    }
+                    Ok(SyscallResult::Success(return_value)) => {
+                        strace!(current_task, "-> {:#x}", return_value);
+                        current_task.registers.rax = return_value;
+                    }
+                    Ok(SyscallResult::SigReturn) => {
+                        // Do not modify the register state of the thread. The sigreturn syscall has
+                        // restored the proper register state for the thread to continue with.
+                        strace!(current_task, "-> sigreturn");
+                    }
+                    Err(errno) => {
+                        strace!(current_task, "!-> {}", errno);
+                        current_task.registers.rax = (-errno.value()) as u64;
+                    }
+                }
+
+                if let Some(exit_status) = deliver_signal(current_task, None) {
+                    exception.set_exception_state(&ZX_EXCEPTION_STATE_THREAD_EXIT)?;
+                    break exit_status;
+                }
+
+                // Handle the debug address after the thread is set up to continue, because
+                // `set_process_debug_addr` expects the register state to be in a post-syscall state
+                // (most importantly the instruction pointer needs to be "correct").
+                set_process_debug_addr(current_task)?;
+
+                thread.write_state_general_regs(current_task.registers)?;
+                exception.set_exception_state(&ZX_EXCEPTION_STATE_HANDLED)?;
+            }
+
+            ZX_EXCP_FATAL_PAGE_FAULT => {
+                const ERRCODE_PROTECTION_VIOLATION: u64 = 1 << 0;
+                const ERRCODE_WRITE: u64 = 1 << 1;
+                const ERRCODE_INSTRUCTION_FETCH: u64 = 1 << 4;
+
+                let exc_data = unsafe { report.context.arch.x86_64 };
+                let fault_addr = UserAddress::from(exc_data.cr2);
+                let access_type = if (exc_data.err_code & ERRCODE_INSTRUCTION_FETCH) != 0 {
+                    PageFaultAccessType::Execute
+                } else if (exc_data.err_code & ERRCODE_WRITE) != 0 {
+                    PageFaultAccessType::Write
+                } else {
+                    PageFaultAccessType::Read
+                };
+                let violation_type = if (exc_data.err_code & ERRCODE_PROTECTION_VIOLATION) != 0 {
+                    PageFaultViolationType::Protection
+                } else {
+                    PageFaultViolationType::NotPresent
+                };
+
+                current_task.registers = thread.read_state_general_regs()?;
+                strace!(
+                    current_task,
+                    "page_fault({:#x}, {:?}, {:?})",
+                    fault_addr.ptr(),
+                    access_type,
+                    violation_type
+                );
+
+                match current_task.mm.page_fault(fault_addr, access_type, violation_type) {
+                    Ok(()) => {
+                        strace!(current_task, " -> handled");
+                    }
+                    Err(errno) => {
+                        strace!(current_task, "!-> {}", errno);
+
+                        let siginfo = SignalInfo::default(SIGSEGV);
+                        if let Some(exit_status) = deliver_signal(current_task, Some(siginfo)) {
+                            exception.set_exception_state(&ZX_EXCEPTION_STATE_THREAD_EXIT)?;
+                            break exit_status;
+                        }
+                    }
+                }
+
+                thread.write_state_general_regs(current_task.registers)?;
+                exception.set_exception_state(&ZX_EXCEPTION_STATE_HANDLED)?;
+            }
+
+            _ => {
+                info!("exception type: 0x{:x}", info.type_);
+                exception.set_exception_state(&ZX_EXCEPTION_STATE_TRY_NEXT)?;
+            }
         }
-
-        let syscall_number = report.context.synth_data as u64;
-        current_task.registers = thread.read_state_general_regs()?;
-
-        let regs = &current_task.registers;
-        let args = (regs.rdi, regs.rsi, regs.rdx, regs.r10, regs.r8, regs.r9);
-        strace!(
-            current_task,
-            "{}({:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x})",
-            SyscallDecl::from_number(syscall_number).name,
-            args.0,
-            args.1,
-            args.2,
-            args.3,
-            args.4,
-            args.5
-        );
-        match dispatch_syscall(current_task, syscall_number, args) {
-            Ok(SyscallResult::Exit(error_code)) => {
-                exception.set_exception_state(&ZX_EXCEPTION_STATE_THREAD_EXIT)?;
-                break ExitStatus::Exited(error_code);
-            }
-            Ok(SyscallResult::Success(return_value)) => {
-                strace!(current_task, "-> {:#x}", return_value);
-                current_task.registers.rax = return_value;
-            }
-            Ok(SyscallResult::SigReturn) => {
-                // Do not modify the register state of the thread. The sigreturn syscall has
-                // restored the proper register state for the thread to continue with.
-                strace!(current_task, "-> sigreturn");
-            }
-            Err(errno) => {
-                strace!(current_task, "!-> {}", errno);
-                current_task.registers.rax = (-errno.value()) as u64;
-            }
-        }
-
-        if let Some(exit_status) = dequeue_signal(current_task) {
-            exception.set_exception_state(&ZX_EXCEPTION_STATE_THREAD_EXIT)?;
-            break exit_status;
-        }
-
-        // Handle the debug address after the thread is set up to continue, because
-        // `set_process_debug_addr` expects the register state to be in a post-syscall state (most
-        // importantly the instruction pointer needs to be "correct").
-        set_process_debug_addr(current_task)?;
-
-        thread.write_state_general_regs(current_task.registers)?;
-        exception.set_exception_state(&ZX_EXCEPTION_STATE_HANDLED)?;
     };
 
     strace!(current_task, "-> exit_status {:?}", exit_status);

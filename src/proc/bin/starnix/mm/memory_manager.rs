@@ -730,6 +730,19 @@ fn create_user_vmar(vmar: &zx::Vmar, vmar_info: &zx::VmarInfo) -> Result<zx::Vma
     Ok(vmar)
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum PageFaultAccessType {
+    Read,
+    Write,
+    Execute,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PageFaultViolationType {
+    Protection,
+    NotPresent,
+}
+
 pub struct MemoryManager {
     /// The root VMAR for the child process.
     ///
@@ -974,6 +987,15 @@ impl MemoryManager {
     pub fn unmap(&self, addr: UserAddress, length: usize) -> Result<(), Errno> {
         let mut state = self.state.write();
         state.unmap(addr, length)
+    }
+
+    pub fn page_fault(
+        &self,
+        _addr: UserAddress,
+        _access_type: PageFaultAccessType,
+        _violation_type: PageFaultViolationType,
+    ) -> Result<(), Errno> {
+        error!(EFAULT)
     }
 
     pub fn protect(
