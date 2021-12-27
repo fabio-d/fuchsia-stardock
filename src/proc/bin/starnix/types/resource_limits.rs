@@ -3,3 +3,4 @@
 // found in the LICENSE file.
 
 pub const RLIMIT_NOFILE_MAX: u64 = 1024;
+pub const RLIMIT_STACK_MAX: u64 = 8 * 1024 * 1024;

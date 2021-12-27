@@ -205,9 +205,6 @@ pub struct MemoryManagerState {
 
     /// Initial stack address
     pub stack_start: UserAddress,
-
-    /// Maximum stack size
-    pub stack_size: usize,
 }
 
 impl MemoryManagerState {
@@ -749,7 +746,6 @@ impl MemoryManager {
                 mappings: RangeMap::new(),
                 executable_node: None,
                 stack_start: UserAddress::default(),
-                stack_size: 0,
             }),
             dumpable: Mutex::new(DumpPolicy::DISABLE),
         })
