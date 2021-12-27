@@ -563,6 +563,13 @@ pub fn sys_unlinkat(
     Ok(SUCCESS)
 }
 
+pub fn sys_unlink(
+    current_task: &CurrentTask,
+    user_path: UserCString,
+) -> Result<SyscallResult, Errno> {
+    sys_unlinkat(current_task, FdNumber::AT_FDCWD, user_path, 0)
+}
+
 pub fn sys_renameat(
     current_task: &CurrentTask,
     old_dir_fd: FdNumber,

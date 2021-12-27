@@ -168,6 +168,7 @@ pub fn dispatch_syscall(
         truncate[2],
         umask[1],
         uname[1],
+        unlink[1],
         unlinkat[3],
         wait4[4],
         waitid[4],
