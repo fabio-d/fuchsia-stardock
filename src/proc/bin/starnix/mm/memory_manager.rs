@@ -180,9 +180,7 @@ pub struct MemoryManagerState {
     /// The namespace node that represents the executable associated with this task.
     executable_node: Option<NamespaceNode>,
 
-    /// Stack location and size
-    pub stack_base: UserAddress,
-    pub stack_size: usize,
+    /// Initial stack address
     pub stack_start: UserAddress,
 }
 
@@ -807,8 +805,6 @@ impl MemoryManager {
                 brk: None,
                 mappings: RangeMap::new(),
                 executable_node: None,
-                stack_base: UserAddress::default(),
-                stack_size: 0,
                 stack_start: UserAddress::default(),
             }),
             dumpable: Mutex::new(DumpPolicy::DISABLE),
