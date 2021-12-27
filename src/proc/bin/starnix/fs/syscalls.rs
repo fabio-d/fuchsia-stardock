@@ -730,6 +730,13 @@ pub fn sys_pipe2(
     Ok(SUCCESS)
 }
 
+pub fn sys_pipe(
+    current_task: &CurrentTask,
+    user_pipe: UserRef<FdNumber>,
+) -> Result<SyscallResult, Errno> {
+    sys_pipe2(current_task, user_pipe, 0)
+}
+
 pub fn sys_ioctl(
     current_task: &CurrentTask,
     fd: FdNumber,
