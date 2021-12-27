@@ -242,7 +242,7 @@ pub fn load_executable(
     let stack = populate_initial_stack(&stack_vmo, argv, environ, auxv, stack_base, stack)?;
 
     let mut mm_state = current_task.mm.state.write();
-    mm_state.stack_base = stack_base;
+    mm_state.stack_start = stack;
     mm_state.stack_size = stack_size;
 
     Ok(ThreadStartInfo { entry, stack })

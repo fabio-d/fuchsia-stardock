@@ -203,8 +203,10 @@ pub struct MemoryManagerState {
     /// The namespace node that represents the executable associated with this task.
     executable_node: Option<NamespaceNode>,
 
-    /// Stack location and size
-    pub stack_base: UserAddress,
+    /// Initial stack address
+    pub stack_start: UserAddress,
+
+    /// Maximum stack size
     pub stack_size: usize,
 }
 
@@ -746,7 +748,7 @@ impl MemoryManager {
                 brk: None,
                 mappings: RangeMap::new(),
                 executable_node: None,
-                stack_base: UserAddress::default(),
+                stack_start: UserAddress::default(),
                 stack_size: 0,
             }),
             dumpable: Mutex::new(DumpPolicy::DISABLE),
@@ -1276,7 +1278,7 @@ impl FileOps for ProcStatFile {
             let command = command.as_c_str().to_str().unwrap_or("unknown");
             let mut stats = [0u64; 49];
             let mm_state = self.task.mm.state.read();
-            stats[24] = mm_state.stack_base.ptr() as u64;
+            stats[24] = mm_state.stack_start.ptr() as u64;
             let stat_str = stats.map(|n| n.to_string()).join(" ");
             write!(sink, "{} ({}) R {}\n", self.task.get_pid(), command, stat_str)?;
             Ok(None)
