@@ -369,10 +369,9 @@ pub fn load_executable(
 
     let dt_debug_address = parse_debug_addr(&main_elf);
 
-    // TODO(tbodt): implement MAP_GROWSDOWN and then reset this to 1 page. The current value of
-    // this is based on adding 0x1000 each time a segfault appears.
-    let stack_size: usize = 0xf0000;
-    let stack_vmo = Arc::new(zx::Vmo::create(stack_size as u64).map_err(|_| errno!(ENOMEM))?);
+    // TODO(tbodt): implement MAP_GROWSDOWN
+    let stack_size = RLIMIT_STACK_MAX;
+    let stack_vmo = Arc::new(zx::Vmo::create(stack_size).map_err(|_| errno!(ENOMEM))?);
     stack_vmo
         .as_ref()
         .set_name(CStr::from_bytes_with_nul(b"[stack]\0").unwrap())
@@ -381,7 +380,7 @@ pub fn load_executable(
         UserAddress::default(),
         Arc::clone(&stack_vmo),
         0,
-        stack_size,
+        stack_size as usize,
         zx::VmarFlags::PERM_READ | zx::VmarFlags::PERM_WRITE,
         MappingOptions::empty(),
         None,
@@ -414,7 +413,6 @@ pub fn load_executable(
 
     let mut mm_state = current_task.mm.state.write();
     mm_state.stack_start = stack;
-    mm_state.stack_size = stack_size;
 
     Ok(ThreadStartInfo { entry, stack, dt_debug_address })
 }

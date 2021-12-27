@@ -371,12 +371,7 @@ pub fn sys_getrlimit(
             Ok(rlimit { rlim_cur: RLIMIT_NOFILE_MAX, rlim_max: RLIMIT_NOFILE_MAX })
         }
         resource if resource == RLIMIT_STACK => {
-            // The stack size is fixed at the moment, but
-            // if MAP_GROWSDOWN is implemented this should
-            // report the limit that it can be grown.
-            let mm_state = current_task.mm.state.read();
-            let stack_size = mm_state.stack_size as u64;
-            Ok(rlimit { rlim_cur: stack_size, rlim_max: stack_size })
+            Ok(rlimit { rlim_cur: RLIMIT_STACK_MAX, rlim_max: RLIMIT_STACK_MAX })
         }
         _ => {
             not_implemented!("getrlimit: {:?}", resource);
