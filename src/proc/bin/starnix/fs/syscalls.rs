@@ -621,6 +621,14 @@ pub fn sys_fchmodat(
     Ok(SUCCESS)
 }
 
+pub fn sys_chmod(
+    current_task: &CurrentTask,
+    user_path: UserCString,
+    mode: FileMode,
+) -> Result<SyscallResult, Errno> {
+    sys_fchmodat(current_task, FdNumber::AT_FDCWD, user_path, mode)
+}
+
 fn maybe_uid(id: u32) -> Option<uid_t> {
     if id == u32::MAX {
         None
