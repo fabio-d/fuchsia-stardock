@@ -112,12 +112,12 @@ async fn open_image(
     let open_image_result =
         if let Some((fetcher_client_end, fetcher_done_fut)) = make_fetcher(&image_reference) {
             let open_image_fut =
-                manager.open_image(Some(&mut image_reference.to_fidl()), Some(fetcher_client_end));
+                manager.open_image(Some(&mut image_reference.into()), Some(fetcher_client_end));
 
             // Serve fetcher and collect result
             futures::join!(open_image_fut, fetcher_done_fut).0
         } else {
-            manager.open_image(Some(&mut image_reference.to_fidl()), None).await
+            manager.open_image(Some(&mut image_reference.into()), None).await
         };
 
     if let Some(image) = open_image_result? {
@@ -161,7 +161,7 @@ async fn do_pull(
         // requests a specific digest, which, by definition, cannot be modified online.
         let mut loose_image_reference_fidl = match image_reference {
             image_reference::ImageReference::ByNameAndDigest(_, _) =>
-                Some(image_reference.to_fidl()),
+                Some(image_reference.into()),
             _ =>
                 None,
         };
