@@ -96,6 +96,10 @@ impl Container {
                     "/proc:proc".to_string(),
                 ]))),
             },
+            fdata::DictionaryEntry {
+                key: "user".to_string(),
+                value: Some(Box::new(fdata::DictionaryValue::Str("root:x:0:0".to_string()))),
+            },
         ];
 
         let mut decl = fdecl::Component {
