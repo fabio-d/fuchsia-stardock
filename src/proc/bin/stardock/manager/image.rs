@@ -7,10 +7,12 @@ use fidl_fuchsia_stardock as fstardock;
 use fuchsia_async as fasync;
 use futures::io::AsyncReadExt;
 use log::info;
+use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use stardock_common::digest;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fs::File;
 use std::io::{Read, Seek, Write};
 use std::path::Path;
 use std::rc::Rc;
@@ -22,10 +24,14 @@ const READ_BUFFER_SIZE: usize = 4096;
 
 #[derive(Debug)]
 pub struct Image {
+    persistent_data: ImagePersistentData,
     config: serde_types::ImageV1Config,
     config_blob: Blob,
     layers: Vec<Rc<Blob>>,
 }
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct ImagePersistentData {}
 
 #[derive(Debug)]
 pub struct Blob {
@@ -35,6 +41,7 @@ pub struct Blob {
 
 #[derive(Debug)]
 pub struct ImageRegistry {
+    database_path: Box<Path>, // file with persistent data
     blobs_dir: Box<Path>, // where blobs are stored
     blobs: HashMap<digest::Sha256Digest, BlobTypeAndData>,
 }
@@ -66,6 +73,13 @@ impl Image {
 }
 
 impl Blob {
+    fn new(blobs_dir: &Path, digest: &digest::Sha256Digest) -> Blob {
+        Blob {
+            digest: digest.clone(),
+            file_path: blobs_dir.join(digest.as_str()).into_boxed_path(),
+        }
+    }
+
     pub fn digest(&self) -> &digest::Sha256Digest {
         &self.digest
     }
@@ -88,11 +102,48 @@ impl ImageRegistry {
             std::fs::create_dir(&blobs_dir).context("Failed to create blobs directory")?;
         }
 
-        // TODO: remove orphan files (e.g. leftovers from a past crash)
+        // Load images (and list of referenced blobs) from database
+        let mut database_path = storage_path.to_path_buf();
+        database_path.push("images.json");
+        let mut blobs = HashMap::new();
+        if let Some(data) = ImageRegistry::read_database(&database_path)? {
+            for (image_digest, persistent_data) in data {
+                let config_blob = Blob::new(&blobs_dir, &image_digest);
+                let config: serde_types::ImageV1 = {
+                    let mut file = File::open(&config_blob.file_path)?;
+                    read_json_from_file(&mut file)?
+                };
+
+                // Get or create linked layers blobs
+                let layers = config.root_fs.diff_ids.iter().map(|layer_digest| {
+                    let entry = blobs.entry(layer_digest.clone()).or_insert_with(|| {
+                        BlobTypeAndData::Layer(Rc::new(Blob::new(&blobs_dir, &layer_digest)))
+                    });
+                    if let BlobTypeAndData::Layer(blob) = entry {
+                        Rc::clone(blob)
+                    } else {
+                        panic!("Layer {} is already present as an image", layer_digest.as_str());
+                    }
+                }).collect();
+
+                blobs.insert(
+                    image_digest,
+                    BlobTypeAndData::Image(Rc::new(Image {
+                        persistent_data,
+                        config: config.config,
+                        config_blob,
+                        layers,
+                    })),
+                );
+            }
+
+            // TODO: remove orphan files (e.g. leftovers from a past crash)
+        }
 
         let result = ImageRegistry {
+            database_path: database_path.into_boxed_path(),
             blobs_dir: blobs_dir.into_boxed_path(),
-            blobs: HashMap::new(), // TODO: load from storage
+            blobs,
         };
 
         Ok(result)
@@ -256,6 +307,7 @@ impl ImageRegistry {
         }
 
         let image_ref = Rc::new(Image {
+            persistent_data: ImagePersistentData::default(),
             config,
             config_blob: self.persist_blob(image_digest, image_tmpfile),
             layers: layers_refs,
@@ -268,6 +320,8 @@ impl ImageRegistry {
             image_ref.config_blob,
             image_ref.layers,
         );
+
+        self.write_database();
 
         Ok(image_ref)
     }
@@ -292,6 +346,37 @@ impl ImageRegistry {
 
         info!("Persisted temporary file {} as {}", tmppath.display(), newpath.display());
         Blob { digest: digest.clone(), file_path: newpath.into_boxed_path() }
+    }
+
+    /// Read images' persistent data from the JSON file
+    fn read_database(
+        database_path: &Path,
+    ) -> Result<Option<HashMap<digest::Sha256Digest, ImagePersistentData>>, Error> {
+        match File::open(database_path) {
+            Ok(mut database_file) =>
+                Ok(Some(read_json_from_file(&mut database_file)?)),
+            Err(err) =>
+                if err.kind() == std::io::ErrorKind::NotFound {
+                    Ok(None)
+                } else {
+                    anyhow::bail!("Failed to load image database: {}", err);
+                }
+        }
+    }
+
+    /// Write images' persistent data to the JSON file
+    fn write_database(&self) {
+        let mut data = HashMap::new();
+        for (digest, blob_data) in &self.blobs {
+            if let BlobTypeAndData::Image(image) = blob_data {
+                data.insert(digest, &image.persistent_data);
+            }
+        }
+
+        let tmp_path = self.database_path.with_extension("tmp");
+        let tmp_file = File::create(&tmp_path).expect("Failed to create temporary file");
+        serde_json::to_writer_pretty(tmp_file, &data).expect("Failed to write temporary file");
+        std::fs::rename(tmp_path, &self.database_path).expect("Failed to replace database file");
     }
 }
 
