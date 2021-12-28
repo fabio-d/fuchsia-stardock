@@ -10,8 +10,8 @@ use fuchsia_async as fasync;
 use futures::TryStreamExt;
 use log::error;
 use stardock_common::{digest, image_reference};
-use std::borrow::Borrow;
 use std::cell::RefCell;
+use std::convert::TryFrom;
 use std::path::Path;
 use std::rc::Rc;
 use lazy_static::lazy_static;
@@ -96,7 +96,7 @@ impl Manager {
                 fstardock::ManagerRequest::OpenImage { image_reference, image_fetcher, responder } => {
                     // Convert from FIDL ImageReference to image_reference::ImageReference
                     let image_reference = match image_reference {
-                        Some(boxed) => Some(image_reference::ImageReference::from_fidl(boxed.borrow())?),
+                        Some(boxed) => Some(image_reference::ImageReference::try_from(*boxed)?),
                         None => None,
                     };
 

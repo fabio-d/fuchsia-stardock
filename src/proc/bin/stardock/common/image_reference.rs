@@ -6,6 +6,7 @@ use anyhow::Error;
 use fidl_fuchsia_stardock as fstardock;
 use lazy_static::lazy_static;
 use regex::Regex;
+use std::convert::TryFrom;
 use std::str::FromStr;
 
 use crate::digest;
@@ -27,46 +28,47 @@ pub enum ImageReferenceAmbiguityType {
     NameOrImageId,
 }
 
-impl ImageReference {
-    // Validate and convert from FIDL ImageReference
-    pub fn from_fidl(val: &fstardock::ImageReference) -> Result<ImageReference, Error> {
+impl TryFrom<fstardock::ImageReference> for ImageReference {
+    type Error = Error;
+
+    fn try_from(val: fstardock::ImageReference) -> Result<ImageReference, Error> {
         match val {
             fstardock::ImageReference::ByNameAndTag(fstardock::ByNameAndTag { name, tag }) => {
-                if validate_name(name) && validate_tag(tag) {
-                    return Ok(ImageReference::ByNameAndTag(name.clone(), tag.clone()));
+                if validate_name(&name) && validate_tag(&tag) {
+                    return Ok(ImageReference::ByNameAndTag(name, tag));
                 }
             }
 
             fstardock::ImageReference::ByNameAndDigest(fstardock::ByNameAndDigest { name, digest }) => {
-                if validate_name(name) {
-                    return Ok(ImageReference::ByNameAndDigest(name.clone(), digest.parse()?));
+                if validate_name(&name) {
+                    return Ok(ImageReference::ByNameAndDigest(name, digest.parse()?));
                 }
             }
 
             fstardock::ImageReference::ByNameOrImageId(fstardock::ByNameOrImageId { text, search_domain }) => {
                 match search_domain {
                     fstardock::ImageReferenceAmbiguityType::NameOnly => {
-                        if validate_name(text) {
+                        if validate_name(&text) {
                             return Ok(ImageReference::ByNameOrImageId(
-                                text.clone(),
+                                text,
                                 ImageReferenceAmbiguityType::NameOnly,
                             ));
                         }
                     }
 
                     fstardock::ImageReferenceAmbiguityType::ImageIdOnly => {
-                        if validate_abbreviated_image_id(text) {
+                        if validate_abbreviated_image_id(&text) {
                             return Ok(ImageReference::ByNameOrImageId(
-                                text.clone(),
+                                text,
                                 ImageReferenceAmbiguityType::ImageIdOnly,
                             ));
                         }
                     }
 
                     fstardock::ImageReferenceAmbiguityType::NameOrImageId => {
-                        if validate_name(text) && validate_abbreviated_image_id(text) {
+                        if validate_name(&text) && validate_abbreviated_image_id(&text) {
                             return Ok(ImageReference::ByNameOrImageId(
-                                text.clone(),
+                                text,
                                 ImageReferenceAmbiguityType::NameOrImageId,
                             ));
                         }
@@ -77,27 +79,28 @@ impl ImageReference {
 
         anyhow::bail!("Invalid FIDL ImageReference");
     }
+}
 
-    // Convert to FIDL ImageReference
-    pub fn to_fidl(&self) -> fstardock::ImageReference {
+impl Into<fstardock::ImageReference> for ImageReference {
+    fn into(self) -> fstardock::ImageReference {
         match self {
             ImageReference::ByNameAndTag(name, tag) => {
                 fstardock::ImageReference::ByNameAndTag(fstardock::ByNameAndTag {
-                    name: name.clone(),
-                    tag: tag.clone(),
+                    name,
+                    tag,
                 })
             }
 
             ImageReference::ByNameAndDigest(name, digest) => {
                 fstardock::ImageReference::ByNameAndDigest(fstardock::ByNameAndDigest {
-                    name: name.clone(),
+                    name,
                     digest: digest.as_str().to_string(),
                 })
             }
 
             ImageReference::ByNameOrImageId(text, search_domain) => {
                 fstardock::ImageReference::ByNameOrImageId(fstardock::ByNameOrImageId {
-                    text: text.clone(),
+                    text,
                     search_domain: match search_domain {
                         ImageReferenceAmbiguityType::NameOnly =>
                             fstardock::ImageReferenceAmbiguityType::NameOnly,
@@ -221,9 +224,7 @@ fn validate_abbreviated_image_id(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{ImageReference, ImageReferenceAmbiguityType};
-    use fidl_fuchsia_stardock as fstardock;
-    use lazy_static::lazy_static;
+    use super::*;
     use matches::assert_matches;
     use test_case::test_case;
 
@@ -378,8 +379,8 @@ mod tests {
     #[test_case("717ca7b71" ; "name or abbreviated digest")]
     #[test_case(MAX_LENGTH_TESTCASE.as_str() ; "max length")]
     fn fidl_roundtrip(text: &str) {
-        let imgref = text.parse::<ImageReference>().expect("from_str");
-        let fidl = imgref.to_fidl();
-        assert_eq!(imgref, ImageReference::from_fidl(&fidl).expect("from_fidl"));
+        let imgref: ImageReference = text.parse().expect("from_str");
+        let fidl: fstardock::ImageReference = imgref.clone().into();
+        assert_eq!(imgref, ImageReference::try_from(fidl).expect("from FIDL"));
     }
 }
