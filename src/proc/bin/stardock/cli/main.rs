@@ -17,7 +17,7 @@ mod stdio_forwarder;
 
 // These are hardcoded at the moment. Maybe someday we will support other registries
 static REGISTRY_URL: &str = "https://registry.hub.docker.com";
-static REGISTRY_IMAGE_PREFIX: &str = "library/";
+static REGISTRY_DEFAULT_PREFIX: &str = "library/";
 
 fn app<'a, 'b>() -> App<'a, 'b> {
     App::new("stardock")
@@ -84,7 +84,10 @@ fn make_fetcher(
     let http_loader =
         connect_to_protocol::<fnethttp::LoaderMarker>().expect("failed to obtain HTTP loader");
 
-    let base_url = format!("{}/v2/{}{}", REGISTRY_URL, REGISTRY_IMAGE_PREFIX, image_name);
+    // Build fetcher, prepending REGISTRY_DEFAULT_PREFIX to the image name if the user has requested
+    // an official image.
+    let name_prefix = if image_name.contains('/') { "" } else { REGISTRY_DEFAULT_PREFIX };
+    let base_url = format!("{}/v2/{}{}", REGISTRY_URL, name_prefix, image_name);
     let mut fetcher = image_fetcher::ImageFetcher::new(http_loader, &base_url, &image_reference);
 
     let (client, request_stream) =
