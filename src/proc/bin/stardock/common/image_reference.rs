@@ -192,15 +192,19 @@ impl FromStr for ImageReference {
 
 // Reference for naming constraints: https://docs.docker.com/engine/reference/commandline/tag/
 
-fn validate_name(text: &str) -> bool {
+fn validate_name_component(text: &str) -> bool {
     lazy_static! {
         static ref RE: Regex = Regex::new(r"^([0-9a-z](\.|__?|-+)?)*[0-9a-z]$").unwrap();
     }
 
+    RE.is_match(text)
+}
+
+fn validate_name(text: &str) -> bool {
     text.len() >= 1
         && text.len() <= (fstardock::MAX_NAME_LENGTH as usize)
         && text != "sha256"
-        && RE.is_match(text)
+        && text.split('/').all(validate_name_component)
 }
 
 fn validate_tag(text: &str) -> bool {
@@ -228,6 +232,10 @@ mod tests {
     #[test_case("ex.a-mp__le:my-tAg" ; "name and tag with separators")]
     #[test_case("ex---le:my-Tag." ; "name and tag ending with a period")]
     #[test_case("ex.a.le:MY._.TAG-" ; "name and tag ending with a dash")]
+    #[test_case("foo/bar:latest" ; "name with multiple components and tag")]
+    #[test_case("sha256/bar:latest" ; "name with sha256 as the first component")]
+    #[test_case("foo/sha256:latest" ; "name with sha256 as the last component")]
+    #[test_case("foo/sha256/bar:latest" ; "name with sha256 as mid component")]
     fn from_str_by_name_and_tag(text: &str) {
         assert_matches!(
             text.parse::<ImageReference>(),
@@ -245,11 +253,25 @@ mod tests {
                 if name == "example" && digest.as_str() == "717ca7b714817307d6000a9149f6a0f6a2fb58efd677e37e66b4b7147de93159");
     }
 
+    // Valid input (NOTE: the tag is correctly ignored in the second case)
+    #[test_case("example1/example2@sha256:717ca7b714817307d6000a9149f6a0f6a2fb58efd677e37e66b4b7147de93159" ; "name with multiple components and digest")]
+    #[test_case("example1/example2:mytag@sha256:717ca7b714817307d6000a9149f6a0f6a2fb58efd677e37e66b4b7147de93159" ; "name with multiple components and digest with tag")]
+    fn from_str_by_name_with_multiple_components_and_digest(text: &str) {
+        assert_matches!(
+            text.parse::<ImageReference>(),
+            Ok(ImageReference::ByNameAndDigest(name, digest))
+                if name == "example1/example2" && digest.as_str() == "717ca7b714817307d6000a9149f6a0f6a2fb58efd677e37e66b4b7147de93159");
+    }
+
     // Valid input
     #[test_case("ex4mp1e" ; "name only")]
     #[test_case("e__x.a-m_p__le" ; "with separators")]
     #[test_case("e----le" ; "with many dashes as a separator")]
     #[test_case("717ca7b714817307d6000a9149f6a0f6a2fb58efd677e37e66b4b7147de931599999999999" ; "too long to be a digest")]
+    #[test_case("sha256/bar" ; "with sha256 as the first component")]
+    #[test_case("foo/sha256" ; "with sha256 as the last component")]
+    #[test_case("foo/sha256/bar" ; "with sha256 as mid component")]
+    #[test_case("12345678/12345678" ; "with numeric components")]
     fn from_str_by_name(text: &str) {
         assert_matches!(
             text.parse::<ImageReference>(),
@@ -310,6 +332,7 @@ mod tests {
     #[test_case("na___me" ; "invalid separator, three underscores")]
     #[test_case("na_-me" ; "consecutive separators 1")]
     #[test_case("na._me" ; "consecutive separators 2")]
+    #[test_case("foo//bar" ; "consecutive slashes")]
     fn from_str_err(text: &str) {
         assert_matches!(text.parse::<ImageReference>(), Err(_));
     }
