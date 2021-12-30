@@ -78,6 +78,7 @@ rustc_binary("manager_bin") {
     "//third_party/rust_crates:flate2",
     "//third_party/rust_crates:futures",
     "//third_party/rust_crates:hex",
+    "//third_party/rust_crates:itertools",
     "//third_party/rust_crates:lazy_static",
     "//third_party/rust_crates:log",
     "//third_party/rust_crates:rand",
