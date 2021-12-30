@@ -56,6 +56,7 @@ enum BlobTypeAndData {
 enum NewLayerData {
     PersistentFile(Rc<Blob>),
     TemporaryFile(NamedTempFile),
+    BackReference(usize),
 }
 
 impl Image {
@@ -223,14 +224,24 @@ impl ImageRegistry {
                     NewLayerData::PersistentFile(Rc::clone(blob))
                 }
                 None => {
-                    // download it
-                    let tmpfile = download_compressed_blob(
-                        &blobs_dir,
-                        &compressed_digest,
-                        &uncompressed_digest,
-                        &image_fetcher,
-                    ).await.context("Failed to fetch layer")?;
-                    NewLayerData::TemporaryFile(tmpfile)
+                    // have we already seen this digest in one of the past layers?
+                    let backref_index = new_layers.iter().position(|(past_uncompressed_digest, _)| {
+                        uncompressed_digest == *past_uncompressed_digest
+                    });
+
+                    if let Some(index) = backref_index {
+                        // do not re-download it
+                        NewLayerData::BackReference(index)
+                    } else {
+                        // download it
+                        let tmpfile = download_compressed_blob(
+                            &blobs_dir,
+                            &compressed_digest,
+                            &uncompressed_digest,
+                            &image_fetcher,
+                        ).await.context("Failed to fetch layer")?;
+                        NewLayerData::TemporaryFile(tmpfile)
+                    }
                 }
             };
 
@@ -293,6 +304,8 @@ impl ImageRegistry {
                             blob,
                         NewLayerData::TemporaryFile(tmpfile) =>
                             Rc::new(self.persist_blob(layer_digest, tmpfile)),
+                        NewLayerData::BackReference(index) =>
+                            Rc::clone(&layers_refs[index]),
                     }
                 }
             };

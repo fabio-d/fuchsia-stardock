@@ -15,6 +15,7 @@ use fidl_fuchsia_starnix_developer as fstardev;
 use fidl_fuchsia_sys2 as fsys;
 use fuchsia_component::client::connect_to_protocol;
 use fuchsia_runtime::{HandleInfo, HandleType};
+use itertools::Itertools;
 use log::info;
 use rand::Rng;
 use stardock_common::digest;
@@ -225,7 +226,7 @@ impl ContainerRegistry {
         let mut container_dir = self.containers_dir.to_path_buf();
         container_dir.push(id.as_str());
         std::fs::create_dir(&container_dir).expect("Failed to create container directory");
-        for layer in image.layers() {
+        for layer in image.layers().iter().unique_by(|v| v.digest()) {
             layer.link_at(&container_dir);
         }
 
