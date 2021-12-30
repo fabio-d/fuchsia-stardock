@@ -3,10 +3,11 @@
 // found in the LICENSE file.
 
 use anyhow::Error;
+use fidl_fuchsia_net as fnet;
 use fidl_fuchsia_stardock as fstardock;
 use lazy_static::lazy_static;
 use regex::Regex;
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 use std::str::FromStr;
 
 use crate::digest;
@@ -193,6 +194,107 @@ impl FromStr for ImageReference {
     }
 }
 
+/// The result of parsing a registry reference string.
+///
+/// This enum mirrors the FIDL RegistryReference type. See the FIDL file for its description.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegistryReference
+{
+    pub hostname: String,
+    pub port: u16,
+}
+
+impl TryFrom<fstardock::RegistryReference> for RegistryReference {
+    type Error = Error;
+
+    fn try_from(val: fstardock::RegistryReference) -> Result<RegistryReference, Error> {
+        if validate_hostname(&val.hostname) && val.port != 0 {
+            Ok(RegistryReference { hostname: val.hostname, port: val.port })
+        } else {
+            anyhow::bail!("Invalid FIDL RegistryReference");
+        }
+    }
+}
+
+impl Into<fstardock::RegistryReference> for RegistryReference {
+    fn into(self) -> fstardock::RegistryReference {
+        fstardock::RegistryReference { hostname: self.hostname, port: self.port }
+    }
+}
+
+impl FromStr for RegistryReference {
+    type Err = Error;
+
+    fn from_str(text: &str) -> Result<RegistryReference, Error> {
+        match text.rsplitn(2, ':').collect::<Vec<&str>>().as_slice() {
+            [port, hostname] => {
+                // HOSTNAME:PORT
+                if validate_hostname(hostname) {
+                    let port = port.parse::<u16>()?;
+                    if port != 0 {
+                        return Ok(RegistryReference { hostname: hostname.to_string(), port });
+                    }
+                }
+            }
+
+            [hostname] => {
+                // HOSTNAME
+                if validate_hostname(hostname) {
+                    return Ok(RegistryReference { hostname: hostname.to_string(), port: 443 });
+                }
+            }
+
+            _ => unreachable!(),
+        }
+
+        anyhow::bail!("Invalid registry reference");
+    }
+}
+
+/// The result of parsing an image reference string with an optional registry reference.
+///
+/// This enum mirrors the FIDL RegistryReference type. See the FIDL file for its description.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegistryAndImageReference(pub Option<RegistryReference>, pub ImageReference);
+
+impl TryFrom<fstardock::RegistryAndImageReference> for RegistryAndImageReference {
+    type Error = Error;
+
+    fn try_from(val: fstardock::RegistryAndImageReference) -> Result<RegistryAndImageReference, Error> {
+        let registry_reference = match val.registry_reference {
+            Some(boxed) => Some((*boxed).try_into()?),
+            None => None,
+        };
+        Ok(RegistryAndImageReference(
+            registry_reference,
+            val.image_reference.try_into()?,
+        ))
+    }
+}
+
+impl Into<fstardock::RegistryAndImageReference> for RegistryAndImageReference {
+    fn into(self) -> fstardock::RegistryAndImageReference {
+        let registry_reference = self.0.map(|v| Box::new(v.into()));
+        fstardock::RegistryAndImageReference { registry_reference, image_reference: self.1.into() }
+    }
+}
+
+impl FromStr for RegistryAndImageReference {
+    type Err = Error;
+
+    fn from_str(text: &str) -> Result<RegistryAndImageReference, Error> {
+        if let [registry, image] = text.splitn(2, '/').collect::<Vec<&str>>().as_slice() {
+            if *registry == "localhost" || registry.contains(|c| c == '.' || c == ':') {
+                // REGISTRY_REFERENCE/IMAGE_REFERENCE
+                return Ok(RegistryAndImageReference(Some(registry.parse()?), image.parse()?));
+            }
+        }
+
+        // IMAGE_REFERENCE
+        Ok(RegistryAndImageReference(None, text.parse()?))
+    }
+}
+
 // Reference for naming constraints: https://docs.docker.com/engine/reference/commandline/tag/
 
 fn validate_name_component(text: &str) -> bool {
@@ -222,8 +324,14 @@ fn validate_abbreviated_image_id(text: &str) -> bool {
     text.len() >= 1 && text.len() <= 64 && digest::is_lowercase_hex_string(text)
 }
 
+fn validate_hostname(text: &str) -> bool {
+    text.len() >= 1
+        && text.len() <= (fnet::MAX_HOSTNAME_SIZE as usize)
+        && validate_name_component(text)
+}
+
 #[cfg(test)]
-mod tests {
+mod image_reference_tests {
     use super::*;
     use matches::assert_matches;
     use test_case::test_case;
@@ -382,5 +490,118 @@ mod tests {
         let imgref: ImageReference = text.parse().expect("from_str");
         let fidl: fstardock::ImageReference = imgref.clone().into();
         assert_eq!(imgref, ImageReference::try_from(fidl).expect("from FIDL"));
+    }
+}
+
+#[cfg(test)]
+mod registry_reference_tests {
+    use super::*;
+    use matches::assert_matches;
+    use test_case::test_case;
+
+    // Valid input
+    #[test_case("example.com" ; "hostname 1")]
+    #[test_case("registry.example.com" ; "hostname 2")]
+    #[test_case("example" ; "hostname 3")]
+    #[test_case("1.2.3.4" ; "IPv4 address")]
+    #[test_case("localhost" ; "localhost")]
+    fn from_str_without_port(text: &str) {
+        assert_matches!(
+            text.parse::<RegistryReference>(),
+            Ok(RegistryReference { hostname, port })
+                if hostname == text && port == 443);
+    }
+
+    // Valid input
+    #[test_case("example.com", 80 ; "hostname 1")]
+    #[test_case("registry.example.com", 443 ; "hostname 2")]
+    #[test_case("1.2.3.4", 8888 ; "IPv4 address")]
+    #[test_case("localhost", 8080 ; "localhost")]
+    fn from_str_with_port(hostname_text: &str, port_num: u16) {
+        assert_matches!(
+            format!("{}:{}", hostname_text, port_num).parse::<RegistryReference>(),
+            Ok(RegistryReference { hostname, port })
+                if hostname == hostname_text && port == port_num);
+    }
+
+    // Bad input
+    #[test_case("" ; "empty string")]
+    #[test_case(":" ; "only colon")]
+    #[test_case("example.com:" ; "only hostname")]
+    #[test_case("1.2.3.4:" ; "only IPv4 address")]
+    #[test_case("localhost:" ; "only localhost")]
+    #[test_case(":80" ; "only port")]
+    #[test_case("example:0" ; "invalid port 1")]
+    #[test_case("example:65536" ; "invalid port 2")]
+    #[test_case("127.0.0:65536" ; "invalid IPv4 address 1")]
+    #[test_case("127.0.0.256:65536" ; "invalid IPv4 address 2")]
+    fn from_str_err(text: &str) {
+        assert_matches!(text.parse::<RegistryReference>(), Err(_));
+    }
+
+    #[test]
+    fn default_port() {
+        assert_matches!(
+            "example".parse::<RegistryReference>(),
+            Ok(RegistryReference { hostname: _, port: 443 })
+        );
+    }
+
+    lazy_static! {
+        static ref MAX_LENGTH_TESTCASE: String =
+            format!("{}:123", "a".repeat(fnet::MAX_HOSTNAME_SIZE as usize)
+        );
+    }
+
+    #[test_case("example:1" ; "hostname and port")]
+    #[test_case("12.34.56.78:65535" ; "IPv4 and port")]
+    #[test_case(MAX_LENGTH_TESTCASE.as_str() ; "max length")]
+    fn fidl_roundtrip(text: &str) {
+        let imgref: RegistryReference = text.parse().expect("from_str");
+        let fidl: fstardock::RegistryReference = imgref.clone().into();
+        assert_eq!(imgref, RegistryReference::try_from(fidl).expect("from FIDL"));
+    }
+}
+
+#[cfg(test)]
+mod registry_and_image_reference_tests {
+    use super::*;
+    use matches::assert_matches;
+    use test_case::test_case;
+
+    // Valid input
+    #[test_case("example.com", "example" ; "hostname 1")]
+    #[test_case("localhost", "example1/example2" ; "hostname 2")]
+    #[test_case("123.123.123.123", "example" ; "IPv4 address")]
+    #[test_case("hello:123", "example1/example2/example3" ; "hostname and port")]
+    #[test_case("sha256:1234", "example" ; "hostname is sha256")]
+    fn from_str_with_registry(registry: &str, image: &str) {
+        assert_matches!(
+            format!("{}/{}", registry, image).parse::<RegistryAndImageReference>(),
+            Ok(RegistryAndImageReference(Some(registry_reference), image_reference))
+                if registry_reference == registry.parse().unwrap()
+                    && image_reference == image.parse().unwrap());
+    }
+
+    // Valid input
+    #[test_case("example1" ; "no registry, one name component")]
+    #[test_case("example1/example2" ; "no registry, two name components")]
+    #[test_case("example1/example2/example3" ; "no registry, three name components")]
+    fn from_str_without_registry(text: &str) {
+        assert_matches!(
+            text.parse::<RegistryAndImageReference>(),
+            Ok(RegistryAndImageReference(None, image_reference))
+                if image_reference == text.parse().unwrap());
+    }
+
+    // Bad input
+    #[test_case("" ; "empty")]
+    #[test_case("/" ; "slash only")]
+    #[test_case("/example" ; "empty registry")]
+    #[test_case("example.com/" ; "empty image")]
+    #[test_case("/1.2.3.4/x" ; "begin with slash")]
+    #[test_case("1.2.3.4/x/" ; "end with slash")]
+    fn from_str_err(text: &str) {
+        assert_matches!(text.parse::<RegistryReference>(), Err(_));
     }
 }

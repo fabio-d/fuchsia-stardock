@@ -15,18 +15,14 @@ use std::pin::Pin;
 mod image_fetcher;
 mod stdio_forwarder;
 
-// These are hardcoded at the moment. Maybe someday we will support other registries
-static REGISTRY_URL: &str = "https://registry.hub.docker.com";
-static REGISTRY_DEFAULT_PREFIX: &str = "library/";
-
 fn app<'a, 'b>() -> App<'a, 'b> {
     App::new("stardock")
         .about("Tool to manage starnix containers")
         .setting(AppSettings::SubcommandRequiredElseHelp)
         .subcommand(SubCommand::with_name("pull")
-            .about("Download an image from Docker Hub")
+            .about("Download an image from a public registry (default: Docker Hub)")
             .arg(Arg::with_name("IMAGE")
-                .help("Image reference, format: NAME[:TAG|@sha256:DIGEST]")
+                .help("Image reference, format: [REGISTRY/]NAME[:TAG|@sha256:DIGEST]")
                 .required(true)
                 .takes_value(true),
             ),
@@ -34,7 +30,7 @@ fn app<'a, 'b>() -> App<'a, 'b> {
         .subcommand(SubCommand::with_name("create")
             .about("Create a container")
             .arg(Arg::with_name("IMAGE")
-                .help("Image reference, format: IMAGE_ID or NAME[:TAG|@sha256:DIGEST]")
+                .help("Image reference, format: IMAGE_ID or [REGISTRY/]NAME[:TAG|@sha256:DIGEST]")
                 .required(true)
                 .takes_value(true),
             ),
@@ -50,7 +46,7 @@ fn app<'a, 'b>() -> App<'a, 'b> {
         .subcommand(SubCommand::with_name("run")
             .about("Create and start a container")
             .arg(Arg::with_name("IMAGE")
-                .help("Image reference, format: IMAGE_ID or NAME[:TAG|@sha256:DIGEST]")
+                .help("Image reference, format: IMAGE_ID or [REGISTRY/]NAME[:TAG|@sha256:DIGEST]")
                 .required(true)
                 .takes_value(true),
             ),
@@ -61,9 +57,15 @@ fn app<'a, 'b>() -> App<'a, 'b> {
 ///
 /// This function also returns a future that becomes ready when the client end is closed.
 fn make_fetcher(
-    image_reference: &image_reference::ImageReference,
+    registry_and_image_reference: &image_reference::RegistryAndImageReference,
 ) -> Option<(ClientEnd<fstardock::ImageFetcherMarker>, Pin<Box<impl futures::Future>>)> {
-    let (image_name, image_reference) = match image_reference {
+    // If no registry reference is provided, select the default one.
+    let registry_reference = match &registry_and_image_reference.0 {
+        Some(v) => v.clone(),
+        None => stardock_common::DOCKERHUB.clone(),
+    };
+
+    let (image_name, image_reference) = match &registry_and_image_reference.1 {
         image_reference::ImageReference::ByNameAndTag(name, tag) =>
             (name.clone(), tag.clone()),
 
@@ -84,10 +86,9 @@ fn make_fetcher(
     let http_loader =
         connect_to_protocol::<fnethttp::LoaderMarker>().expect("failed to obtain HTTP loader");
 
-    // Build fetcher, prepending REGISTRY_DEFAULT_PREFIX to the image name if the user has requested
-    // an official image.
-    let name_prefix = if image_name.contains('/') { "" } else { REGISTRY_DEFAULT_PREFIX };
-    let base_url = format!("{}/v2/{}{}", REGISTRY_URL, name_prefix, image_name);
+    let registry_url = stardock_common::format_registry_url(&registry_reference);
+    let canonical_name = stardock_common::canonicalize_image_name(&registry_reference, &image_name);
+    let base_url = format!("{}/v2/{}", registry_url, canonical_name);
     let mut fetcher = image_fetcher::ImageFetcher::new(http_loader, &base_url, &image_reference);
 
     let (client, request_stream) =
@@ -107,17 +108,17 @@ async fn open_image(
     manager: &fstardock::ManagerProxy,
     image: &str,
 ) -> Result<fstardock::ImageProxy, Error> {
-    let image_reference = image.parse::<image_reference::ImageReference>()?;
+    let reference = image.parse::<image_reference::RegistryAndImageReference>()?;
 
     let open_image_result =
-        if let Some((fetcher_client_end, fetcher_done_fut)) = make_fetcher(&image_reference) {
+        if let Some((fetcher_client_end, fetcher_done_fut)) = make_fetcher(&reference) {
             let open_image_fut =
-                manager.open_image(Some(&mut image_reference.into()), Some(fetcher_client_end));
+                manager.open_image(Some(&mut reference.into()), Some(fetcher_client_end));
 
             // Serve fetcher and collect result
             futures::join!(open_image_fut, fetcher_done_fut).0
         } else {
-            manager.open_image(Some(&mut image_reference.into()), None).await
+            manager.open_image(Some(&mut reference.into()), None).await
         };
 
     if let Some(image) = open_image_result? {
@@ -152,22 +153,22 @@ async fn do_pull(
     manager: &fstardock::ManagerProxy,
     image: &str,
 ) -> Result<(), Error> {
-    let image_reference = image.parse::<image_reference::ImageReference>()?;
+    let reference = image.parse::<image_reference::RegistryAndImageReference>()?;
 
-    if let Some((fetcher_client_end, fetcher_done_fut)) = make_fetcher(&image_reference) {
+    if let Some((fetcher_client_end, fetcher_done_fut)) = make_fetcher(&reference) {
         // We do not propagate the requested image reference and, instead, set None because we
         // always want to attempt to (re)download the image, even if it already exists locally
         // (because a newer online version might be available). The only exception is when the user
         // requests a specific digest, which, by definition, cannot be modified online.
-        let mut loose_image_reference_fidl = match image_reference {
+        let mut loose_reference_fidl = match &reference.1 {
             image_reference::ImageReference::ByNameAndDigest(_, _) =>
-                Some(image_reference.into()),
+                Some(reference.into()),
             _ =>
                 None,
         };
 
         let open_image_fut =
-            manager.open_image(loose_image_reference_fidl.as_mut(), Some(fetcher_client_end));
+            manager.open_image(loose_reference_fidl.as_mut(), Some(fetcher_client_end));
 
         // Serve fetcher and collect result
         let (open_image_result, _) = futures::join!(open_image_fut, fetcher_done_fut);

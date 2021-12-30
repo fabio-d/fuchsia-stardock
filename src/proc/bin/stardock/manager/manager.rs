@@ -41,16 +41,21 @@ impl Manager {
 
     async fn open_image(
         &self,
-        image_reference: Option<image_reference::ImageReference>,
+        registry_and_image_reference: Option<image_reference::RegistryAndImageReference>,
         image_fetcher: Option<fstardock::ImageFetcherProxy>,
     ) -> Option<Rc<image::Image>> {
         // Searching in the local registry is not implemented yet; therefore, the image reference
         // value is ignored unless it is a manifest digest, which can already be used to validate
         // the manifest to be downloaded
-        let expected_manifest_digest = match &image_reference {
-            Some(image_reference::ImageReference::ByNameAndDigest(_, digest)) => Some(digest),
-            _ => None,
-        };
+        let expected_manifest_digest =
+            if let Some(ref v) = registry_and_image_reference {
+                match &v.1 {
+                    image_reference::ImageReference::ByNameAndDigest(_, digest) => Some(digest),
+                    _ => None,
+                }
+            } else {
+                None
+            };
 
         // If an image_fetcher was given by the client, try to fetch the image
         if let Some(image_fetcher) = image_fetcher {
@@ -93,10 +98,10 @@ impl Manager {
     ) -> Result<(), Error> {
         while let Some(request) = stream.try_next().await? {
             match request {
-                fstardock::ManagerRequest::OpenImage { image_reference, image_fetcher, responder } => {
-                    // Convert from FIDL ImageReference to image_reference::ImageReference
-                    let image_reference = match image_reference {
-                        Some(boxed) => Some(image_reference::ImageReference::try_from(*boxed)?),
+                fstardock::ManagerRequest::OpenImage { registry_and_image_reference, image_fetcher, responder } => {
+                    // Convert from FIDL to native type
+                    let registry_and_image_reference = match registry_and_image_reference {
+                        Some(boxed) => Some(image_reference::RegistryAndImageReference::try_from(*boxed)?),
                         None => None,
                     };
 
@@ -107,7 +112,7 @@ impl Manager {
                     };
 
                     // Fetch/open image and return a handle on success
-                    if let Some(image) = self.open_image(image_reference, image_fetcher).await {
+                    if let Some(image) = self.open_image(registry_and_image_reference, image_fetcher).await {
                         let (client, request_stream) =
                             create_request_stream::<fstardock::ImageMarker>().unwrap();
 
