@@ -11,6 +11,7 @@
 
 library fuchsia.stardock;
 
+using fuchsia.net;
 using zx;
 
 // Reference: https://github.com/moby/moby/issues/10392
@@ -70,23 +71,46 @@ type ImageReferenceAmbiguityType = strict enum {
     NAME_OR_IMAGE_ID = 3;
 };
 
+/// Image reference augmented with an optional registry address.
+///
+/// If the registry field is not set, the application should try to infer it
+/// from the context: if the intent is to select a locally stored image, a
+/// missing registry value means "any registry is acceptable"; if the intent is
+/// to pull a remote image, no registry is interpreted as "use the default
+/// remote registry".
+type RegistryAndImageReference = struct {
+    registry_reference RegistryReference:optional;
+    image_reference ImageReference;
+};
+
+/// Reference to a remote registry.
+///
+/// In stardock, any port different than 443 is regarded as non-SSL.
+type RegistryReference = struct {
+    /// Host name or IP address.
+    hostname fuchsia.net.Hostname;
+
+    /// TCP port number of the remote HTTP or HTTPS server.
+    port uint16;
+};
+
 /// Root interface of the stardock_manager component.
 @discoverable
 protocol Manager {
     /// Obtain an handle to an image.
     ///
-    /// If an ImageReference is provided, it will be used to try to locate the
-    /// image in the local registry.
+    /// If a RegistryAndImageReference is provided, it will be used to try to
+    /// locate the image in the local registry.
     ///
-    /// If no ImageReference is provided, or if the image is not locally
-    /// available, the manager will use the provided ImageFetcher to try to
-    /// import it in the registry (this step is skipped if no ImageFetcher is
-    /// provided).
+    /// If no RegistryAndImageReference is provided, or if the image is not
+    /// locally available, the manager will use the provided ImageFetcher to
+    /// try to import it in the registry (this step is skipped if no
+    /// ImageFetcher is provided).
     ///
     /// On success a handle to the image is returned, or none if the image could
     /// not be located/fetched successfully.
     OpenImage(resource struct {
-        image_reference ImageReference:optional;
+        registry_and_image_reference RegistryAndImageReference:optional;
         image_fetcher client_end:<ImageFetcher, optional>;
     }) -> (resource struct {
         image_handle client_end:<Image, optional>;
