@@ -26,6 +26,7 @@ rustc_library("common") {
 
   source_root = "common/lib.rs"
   deps = [
+    "//sdk/fidl/fuchsia.net:fuchsia.net-rustc",
     "//sdk/fidl/fuchsia.stardock:fuchsia.stardock-rustc",
     "//third_party/rust_crates:anyhow",
     "//third_party/rust_crates:lazy_static",
