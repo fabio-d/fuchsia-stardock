@@ -4,6 +4,7 @@
 
 use anyhow::Error;
 use fuchsia_zircon as zx;
+use log::warn;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::os::unix::ffi::OsStrExt;
@@ -108,7 +109,8 @@ impl TarFilesystem {
                         if let Some(inode_num) = inode_num {
                             *inode_num
                         } else {
-                            anyhow::bail!("Hard link does not refer to an already-seen file");
+                            warn!("Skipping hard link that does not refer to an already-seen file");
+                            continue;
                         }
                     }
                     tar::EntryType::Symlink => {
@@ -117,7 +119,8 @@ impl TarFilesystem {
                         tar_fs.add_inode(TarInode::Symlink(symlink))
                     }
                     _ => {
-                        unimplemented!("Tar entry type: {:?}", tar_entry.header().entry_type())
+                        warn!("Skipping tar entry type: {:?}", tar_entry.header().entry_type());
+                        continue;
                     }
                 };
 
