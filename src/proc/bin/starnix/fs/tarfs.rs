@@ -43,6 +43,27 @@ pub struct TarFilesystem {
     inodes: RwLock<HashMap<ino_t, TarInode>>,
 }
 
+// If a PAX linkpath extension is present, it overrides the path contained in the regular fixed-size
+// header. This usually happens when the path is too long to fit in it.
+fn read_link_path<'a, R: 'a + std::io::Read>(
+    entry: &mut tar::Entry<'a, R>,
+) -> Result<Vec<u8>, Error> {
+    if let Some(exts) = entry.pax_extensions()? {
+        for ext in exts {
+            let ext = ext?;
+            if ext.key_bytes() == b"linkpath" {
+                return Ok(ext.value_bytes().to_vec());
+            }
+        }
+    }
+
+    if let Some(link_name) = entry.link_name_bytes() {
+        return Ok(link_name.to_vec());
+    }
+
+    anyhow::bail!("Failed to read link name");
+}
+
 impl TarFilesystem {
     pub fn new(tar_files: Vec<syncio::Zxio>) -> Result<FileSystemHandle, Error> {
         let tar_fs = Arc::new(TarFilesystem { tar_files, inodes: RwLock::new(HashMap::new()) });
@@ -58,10 +79,10 @@ impl TarFilesystem {
             let mut path_to_inode = HashMap::new(); // to resolve hard links
 
             for tar_entry in archive.entries()? {
-                let tar_entry = tar_entry?;
+                let mut tar_entry = tar_entry?;
 
                 // Split path into ancestors and name
-                let path = tar_entry.path()?;
+                let path = tar_entry.path()?.into_owned();
                 let (ancestors, name) = parse_path(&path)?;
 
                 let parent = get_or_create_parent_directory(
@@ -104,8 +125,7 @@ impl TarFilesystem {
                         tar_fs.add_inode(TarInode::File(file))
                     }
                     tar::EntryType::Link => {
-                        let inode_num =
-                            path_to_inode.get(&tar_entry.link_name_bytes().unwrap().into_owned());
+                        let inode_num = path_to_inode.get(&read_link_path(&mut tar_entry)?);
                         if let Some(inode_num) = inode_num {
                             *inode_num
                         } else {
@@ -114,8 +134,7 @@ impl TarFilesystem {
                         }
                     }
                     tar::EntryType::Symlink => {
-                        let symlink =
-                            TarSymlink::new(tar_entry.link_name_bytes().unwrap().into_owned());
+                        let symlink = TarSymlink::new(read_link_path(&mut tar_entry)?);
                         tar_fs.add_inode(TarInode::Symlink(symlink))
                     }
                     _ => {
