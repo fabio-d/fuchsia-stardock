@@ -18,6 +18,7 @@ use crate::syscalls::*;
 use crate::task::*;
 use crate::types::*;
 use fuchsia_zircon as zx;
+use zerocopy::{AsBytes, FromBytes};
 
 pub fn sys_read(
     current_task: &CurrentTask,
@@ -1207,6 +1208,204 @@ pub fn sys_flock(
 ) -> Result<SyscallResult, Errno> {
     not_implemented!("flock not implemented");
     Ok(SUCCESS)
+}
+
+fn select(
+    current_task: &mut CurrentTask,
+    num_fds: i32,
+    read_fds: UserAddress,
+    write_fds: UserAddress,
+    except_fds: UserAddress,
+    timeout: i32,
+    mask: Option<sigset_t>,
+) -> Result<SyscallResult, Errno> {
+    const POLL_READ: u32 = POLLIN | POLLRDNORM | POLLRDBAND | POLLHUP | POLLERR;
+    const POLL_WRITE: u32 = POLLOUT | POLLWRNORM | POLLWRBAND | POLLERR;
+    const POLL_EXCEPT: u32 = POLLPRI;
+
+    // TODO: Linux does not enforce a static upper limit (however, it does not examine bits past the
+    // current maximum open file descriptor)
+    if num_fds < 0 || num_fds as u32 > __FD_SETSIZE {
+        return error!(EINVAL);
+    }
+
+    let fd_set_bytes = (num_fds as usize + 7) / 8;
+    let mut read_in = vec![0; fd_set_bytes];
+    let mut write_in = vec![0; fd_set_bytes];
+    let mut except_in = vec![0; fd_set_bytes];
+
+    if !read_fds.is_null() {
+        current_task.mm.read_memory(read_fds, &mut read_in)?;
+    }
+    if !write_fds.is_null() {
+        current_task.mm.read_memory(write_fds, &mut write_in)?;
+    }
+    if !except_fds.is_null() {
+        current_task.mm.read_memory(except_fds, &mut except_in)?;
+    }
+
+    let file_object = EpollFileObject::new(current_task.kernel());
+    let epoll_file = file_object.downcast_file::<EpollFileObject>().unwrap();
+
+    for fd in 0..(num_fds as usize) {
+        let block_idx = fd / 8;
+        let block_mask = 1 << (fd % 8);
+
+        let mut events = 0;
+        if (read_in[block_idx] & block_mask) != 0 {
+            events |= POLL_READ;
+        }
+        if (write_in[block_idx] & block_mask) != 0 {
+            events |= POLL_WRITE;
+        }
+        if (except_in[block_idx] & block_mask) != 0 {
+            events |= POLL_EXCEPT;
+        }
+
+        if events != 0 {
+            let file = current_task.files.get(FdNumber::from_raw(fd as i32))?;
+            let event = EpollEvent { events, data: fd as u64 };
+            epoll_file.add(&current_task, &file, event)?;
+        }
+    }
+
+    let mask = mask.unwrap_or_else(|| current_task.signals.read().mask);
+    let ready_fds = current_task.wait_with_temporary_mask(mask, |current_task| {
+        epoll_file.wait(current_task, i32::MAX, timeout)
+    })?;
+
+    let mut read_out = vec![0; fd_set_bytes];
+    let mut write_out = vec![0; fd_set_bytes];
+    let mut except_out = vec![0; fd_set_bytes];
+    let mut num_out_bits = 0;
+
+    for event in &ready_fds {
+        let fd = event.data as usize;
+        let block_idx = fd / 8;
+        let block_mask = 1 << (fd % 8);
+
+        if (event.events & POLL_READ) != 0 && (read_in[block_idx] & block_mask) != 0 {
+            read_out[block_idx] |= block_mask;
+            num_out_bits += 1;
+        }
+
+        if (event.events & POLL_WRITE) != 0 && (write_in[block_idx] & block_mask) != 0 {
+            write_out[block_idx] |= block_mask;
+            num_out_bits += 1;
+        }
+
+        if (event.events & POLL_EXCEPT) != 0 && (except_in[block_idx] & block_mask) != 0 {
+            except_out[block_idx] |= block_mask;
+            num_out_bits += 1;
+        }
+    }
+
+    if !read_fds.is_null() {
+        current_task.mm.write_memory(read_fds, &read_out)?;
+    }
+    if !write_fds.is_null() {
+        current_task.mm.write_memory(write_fds, &write_out)?;
+    }
+    if !except_fds.is_null() {
+        current_task.mm.write_memory(except_fds, &except_out)?;
+    }
+
+    Ok(SyscallResult::Success(num_out_bits))
+}
+
+pub fn sys_select(
+    current_task: &mut CurrentTask,
+    num_fds: i32,
+    read_fds: UserAddress,
+    write_fds: UserAddress,
+    except_fds: UserAddress,
+    user_timeval: UserRef<timeval>,
+) -> Result<SyscallResult, Errno> {
+    let timeout = if user_timeval.is_null() {
+        -1 /* infinite */
+    } else {
+        let mut tv = timeval::default();
+        current_task.mm.read_object(user_timeval, &mut tv)?;
+        duration_from_timeval(tv)?.into_millis() as i32
+    };
+
+    let start_time = zx::Time::get_monotonic();
+
+    let select_result =
+        select(current_task, num_fds, read_fds, write_fds, except_fds, timeout, None);
+
+    let mut remaining_duration =
+        zx::Duration::from_millis(timeout as i64) - (zx::Time::get_monotonic() - start_time);
+    if remaining_duration < zx::Duration::from_millis(0) {
+        remaining_duration = zx::Duration::from_millis(0);
+    };
+    let mut remaining_timeval = timeval_from_duration(remaining_duration);
+
+    // TODO: See comment in sys_ppoll about ERESTARTNOHAND
+    if !user_timeval.is_null() {
+        let _ = current_task.mm.write_object(user_timeval, &mut remaining_timeval);
+    }
+    select_result
+}
+
+#[derive(Debug, Default, Copy, Clone, AsBytes, FromBytes)]
+#[repr(C)]
+pub struct pselect6_sixth_arg {
+    pub sigset_addr: UserAddress,
+    pub sigset_size: __kernel_size_t,
+}
+
+pub fn sys_pselect6(
+    current_task: &mut CurrentTask,
+    num_fds: i32,
+    read_fds: UserAddress,
+    write_fds: UserAddress,
+    except_fds: UserAddress,
+    user_timespec: UserRef<timespec>,
+    user_sixth_arg: UserRef<pselect6_sixth_arg>,
+) -> Result<SyscallResult, Errno> {
+    let timeout = if user_timespec.is_null() {
+        -1 /* infinite */
+    } else {
+        let mut ts = timespec::default();
+        current_task.mm.read_object(user_timespec, &mut ts)?;
+        duration_from_timespec(ts)?.into_millis() as i32
+    };
+
+    let start_time = zx::Time::get_monotonic();
+
+    let mask = if user_sixth_arg.addr().is_null() {
+        None
+    } else {
+        let mut sixth_arg = pselect6_sixth_arg::default();
+        current_task.mm.read_object(user_sixth_arg, &mut sixth_arg)?;
+
+        if sixth_arg.sigset_addr.is_null() {
+            None
+        } else if sixth_arg.sigset_size == std::mem::size_of::<sigset_t>() as __kernel_size_t {
+            let mut mask = sigset_t::default();
+            current_task.mm.read_object(UserRef::new(sixth_arg.sigset_addr), &mut mask)?;
+            Some(mask)
+        } else {
+            return error!(EINVAL);
+        }
+    };
+
+    let select_result =
+        select(current_task, num_fds, read_fds, write_fds, except_fds, timeout, mask);
+
+    let mut remaining_duration =
+        zx::Duration::from_millis(timeout as i64) - (zx::Time::get_monotonic() - start_time);
+    if remaining_duration < zx::Duration::from_millis(0) {
+        remaining_duration = zx::Duration::from_millis(0);
+    };
+    let mut remaining_timespec = timespec_from_duration(remaining_duration);
+
+    // TODO: See comment in sys_ppoll about ERESTARTNOHAND
+    if !user_timespec.is_null() {
+        let _ = current_task.mm.write_object(user_timespec, &mut remaining_timespec);
+    }
+    select_result
 }
 
 #[cfg(test)]
