@@ -75,10 +75,9 @@ gvisor_tests = [
 
   # "prctl_test",
   "pread64_test",
-
   "proc_test",
+  "pselect_test",
 
-  # "pselect_test",
   # "pty_root_test",
   "pty_test",
   "pwrite64_test",
@@ -89,7 +88,7 @@ gvisor_tests = [
 
   # "rtsignal_test",
   # "sched_test",
-  # "select_test",
+  "select_test",
   "sigaction_test",
   "sigprocmask_test",
   "sigaltstack_test",
