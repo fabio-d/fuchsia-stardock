@@ -1,0 +1,10 @@
+{
+    include: [ "//src/proc/tests/android/gvisor.shard.cml" ],
+    program: {
+        binary: "/data/tests/pselect_test",
+
+        // NoTimeout requires timers to be functional enough to interrupt the wait.
+        // SignalMask[Blocks/Allows]Signal require timers to send signals.
+        args: [ "--gunit_filter=-*.NoTimeout:*.SignalMaskBlocksSignal:*.SignalMaskAllowsSignal" ],
+    },
+}

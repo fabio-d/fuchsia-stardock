@@ -1,0 +1,11 @@
+{
+    include: [ "//src/proc/tests/android/gvisor.shard.cml" ],
+    program: {
+        binary: "/data/tests/select_test",
+
+        // NoTimeout and InterruptedBySignal require timers to be functional enough to interrupt the
+        // wait.
+        // SetrlimitCallNOFILE requires working setrlimit.
+        args: [ "--gunit_filter=-*.NoTimeout:*.InterruptedBySignal:*.SetrlimitCallNOFILE" ],
+    },
+}
