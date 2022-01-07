@@ -143,6 +143,13 @@ impl Zxio {
         Ok(actual)
     }
 
+    pub fn release(self) -> Result<zx::Handle, zx::Status> {
+        let mut handle = 0;
+        let status = unsafe { zxio::zxio_release(self.as_ptr(), &mut handle) };
+        zx::ok(status)?;
+        Ok(unsafe { zx::Handle::from_raw(handle) })
+    }
+
     pub fn clone(&self) -> Result<Zxio, zx::Status> {
         let mut handle = 0;
         let status = unsafe { zxio::zxio_clone(self.as_ptr(), &mut handle) };
