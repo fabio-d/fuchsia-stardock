@@ -2,11 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use fuchsia_zircon::{self as zx, AsHandleRef, HandleBased};
+use fuchsia_zircon as zx;
 
-use crate::errno;
-use crate::error;
-use crate::from_status_like_fdio;
 use crate::fs::FileHandle;
 use crate::task::Kernel;
 use crate::types::*;
@@ -19,18 +16,15 @@ pub use remote::*;
 pub use syslog::*;
 pub use timer::*;
 
-/// Create a FileHandle from a zx::Handle.
+/// Create a non-seekable FileHandle from a zxio-compatible handle.
 pub fn create_file_from_handle(kern: &Kernel, handle: zx::Handle) -> Result<FileHandle, Errno> {
-    let info = handle.basic_info().map_err(|status| from_status_like_fdio!(status))?;
-    match info.object_type {
-        zx::ObjectType::SOCKET => create_fuchsia_pipe(kern, zx::Socket::from_handle(handle)),
-        _ => error!(ENOSYS),
-    }
+    create_fuchsia_pipe(kern, handle)
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use fuchsia_zircon::HandleBased;
 
     #[test]
     fn test_create_from_invalid_handle() {
