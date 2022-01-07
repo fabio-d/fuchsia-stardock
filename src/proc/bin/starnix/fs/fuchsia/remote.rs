@@ -20,6 +20,7 @@ use crate::fd_impl_seekable;
 use crate::from_status_like_fdio;
 use crate::fs::*;
 use crate::logging::impossible_error;
+use crate::syscalls::*;
 use crate::task::*;
 use crate::types::*;
 use crate::vmex_resource::VMEX_RESOURCE;
@@ -61,8 +62,9 @@ impl RemoteNode {
     }
 }
 
-pub fn create_fuchsia_pipe(kern: &Kernel, socket: zx::Socket) -> Result<FileHandle, Errno> {
-    let ops = Box::new(RemotePipeObject::new(socket.into_handle())?);
+pub fn create_fuchsia_pipe(kern: &Kernel, handle: zx::Handle) -> Result<FileHandle, Errno> {
+    let zxio = Zxio::create(handle).map_err(|status| from_status_like_fdio!(status))?;
+    let ops = Box::new(RemotePipeObject::new(zxio)?);
     Ok(Anon::new_file(anon_fs(kern), ops, OpenFlags::RDWR))
 }
 
@@ -452,17 +454,54 @@ impl FileOps for RemoteFileObject {
     }
 }
 
+struct TtyConfiguration {
+    icrnl: bool,
+    echo: bool,
+}
+
+impl TtyConfiguration {
+    fn set_from_termios(&mut self, data: &termios) {
+        self.icrnl = (data.c_iflag & ICRNL) != 0;
+        self.echo = (data.c_lflag & ECHO) != 0;
+    }
+
+    fn to_termios(&self) -> termios {
+        let mut c_iflag = 0;
+        if self.icrnl {
+            c_iflag |= ICRNL;
+        }
+
+        let mut c_lflag = 0;
+        if self.echo {
+            c_lflag |= ECHO;
+        }
+
+        termios { c_iflag, c_lflag, ..termios::default() }
+    }
+}
+
+impl Default for TtyConfiguration {
+    fn default() -> Self {
+        Self { icrnl: true, echo: true }
+    }
+}
+
 struct RemotePipeObject {
     /// The underlying Zircon I/O object.
-    ///
-    /// Shared with RemoteNode.
     zxio: Arc<syncio::Zxio>,
+
+    /// Only present if zxio is a TTY
+    tty_config: Option<Mutex<TtyConfiguration>>,
 }
 
 impl RemotePipeObject {
-    fn new(handle: zx::Handle) -> Result<RemotePipeObject, Errno> {
-        let zxio = Arc::new(Zxio::create(handle).map_err(|status| from_status_like_fdio!(status))?);
-        Ok(RemotePipeObject { zxio })
+    fn new(zxio: Zxio) -> Result<RemotePipeObject, Errno> {
+        let tty_config = if zxio.isatty().map_err(|status| from_status_like_fdio!(status))? {
+            Some(Mutex::new(TtyConfiguration::default()))
+        } else {
+            None
+        };
+        Ok(RemotePipeObject { zxio: Arc::new(zxio), tty_config })
     }
 }
 
@@ -475,7 +514,31 @@ impl FileOps for RemotePipeObject {
         current_task: &CurrentTask,
         data: &[UserBuffer],
     ) -> Result<usize, Errno> {
-        zxio_read(&self.zxio, current_task, data)
+        if let Some(tty_config) = self.tty_config.as_ref().map(|m| m.lock()) {
+            let mut bytes = vec![0u8; UserBuffer::get_total_length(data)?];
+            let actual =
+                self.zxio.read(&mut bytes).map_err(|status| from_status_like_fdio!(status))?;
+            bytes.truncate(actual);
+
+            if tty_config.icrnl {
+                for c in &mut bytes {
+                    if *c == b'\r' {
+                        *c = b'\n';
+                    }
+                }
+            }
+
+            if tty_config.echo {
+                if self.zxio.write(&bytes) != Ok(actual) {
+                    warn!("Failed to echo one or more characters on a tty with the ECHO flag");
+                }
+            }
+
+            current_task.mm.write_all(data, &bytes)?;
+            Ok(actual)
+        } else {
+            zxio_read(&self.zxio, current_task, data)
+        }
     }
 
     fn write(
@@ -500,6 +563,38 @@ impl FileOps for RemotePipeObject {
 
     fn query_events(&self, _current_task: &CurrentTask) -> FdEvents {
         zxio_query_events(&self.zxio)
+    }
+
+    fn ioctl(
+        &self,
+        _file: &FileObject,
+        current_task: &CurrentTask,
+        request: u32,
+        in_addr: UserAddress,
+        _out_addr: UserAddress,
+    ) -> Result<SyscallResult, Errno> {
+        match request {
+            TCGETS => {
+                if let Some(tty_config) = self.tty_config.as_ref().map(|m| m.lock()) {
+                    let response = tty_config.to_termios();
+                    current_task.mm.write_object(UserRef::new(in_addr), &response)?;
+                    Ok(SyscallResult::Success(0))
+                } else {
+                    error!(ENOTTY)
+                }
+            }
+            TCSETS | TCSETSF | TCSETSW => {
+                if let Some(ref mut tty_config) = self.tty_config.as_ref().map(|m| m.lock()) {
+                    let mut command = termios::default();
+                    current_task.mm.read_object(UserRef::new(in_addr), &mut command)?;
+                    tty_config.set_from_termios(&command);
+                    Ok(SyscallResult::Success(0))
+                } else {
+                    error!(ENOTTY)
+                }
+            }
+            _ => default_ioctl(request),
+        }
     }
 }
 
@@ -543,7 +638,7 @@ mod test {
 
         let address = map_memory(&current_task, UserAddress::default(), *PAGE_SIZE);
         let (client, server) = zx::Socket::create(zx::SocketOpts::empty())?;
-        let pipe = create_fuchsia_pipe(&kernel, client)?;
+        let pipe = create_fuchsia_pipe(&kernel, client.into_handle())?;
 
         let thread = std::thread::spawn(move || {
             assert_eq!(

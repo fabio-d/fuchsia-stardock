@@ -312,6 +312,7 @@ mod tests {
     use crate::fs::FdEvents;
     use crate::types::UserBuffer;
     use fuchsia_async as fasync;
+    use fuchsia_zircon::HandleBased;
 
     use crate::testing::*;
 
@@ -325,7 +326,7 @@ mod tests {
 
         let (kernel, current_task) = create_kernel_and_task();
         let (local_socket, remote_socket) = zx::Socket::create(zx::SocketOpts::STREAM).unwrap();
-        let pipe = create_fuchsia_pipe(&kernel, remote_socket).unwrap();
+        let pipe = create_fuchsia_pipe(&kernel, remote_socket.into_handle()).unwrap();
 
         const MEM_SIZE: usize = 1024;
         let proc_mem = map_memory(&current_task, UserAddress::default(), MEM_SIZE as u64);
