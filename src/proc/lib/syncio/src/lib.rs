@@ -250,6 +250,13 @@ impl Zxio {
         zx::ok(status)?;
         Ok(iterator)
     }
+
+    pub fn isatty(&self) -> Result<bool, zx::Status> {
+        let mut result = false;
+        let status = unsafe { zxio::zxio_isatty(self.as_ptr(), &mut result) };
+        zx::ok(status)?;
+        Ok(result)
+    }
 }
 
 impl Drop for Zxio {
