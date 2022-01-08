@@ -49,6 +49,11 @@ fn app<'a, 'b>() -> App<'a, 'b> {
                 .help("Image reference, format: IMAGE_ID or [REGISTRY/]NAME[:TAG|@sha256:DIGEST]")
                 .required(true)
                 .takes_value(true),
+            )
+            .arg(Arg::with_name("tty")
+                .help("Forward stdio as a TTY")
+                .short("t")
+                .long("tty"),
             ),
         )
 }
@@ -207,7 +212,7 @@ async fn do_start(
     let container = open_container(manager, container).await?;
 
     // Run it
-    stdio_forwarder::run_container_with_stdio(&container).await?;
+    stdio_forwarder::run_container_with_stdio(&container, false).await?;
 
     Ok(())
 }
@@ -215,12 +220,13 @@ async fn do_start(
 async fn do_run(
     manager: &fstardock::ManagerProxy,
     image: &str,
+    tty: bool,
 ) -> Result<(), Error> {
     // Create new container
     let container = create_container(manager, image).await?;
 
     // Run it
-    stdio_forwarder::run_container_with_stdio(&container).await?;
+    stdio_forwarder::run_container_with_stdio(&container, tty).await?;
 
     Ok(())
 }
@@ -243,7 +249,7 @@ async fn main() -> Result<(), Error> {
             do_start(&manager, cmd.value_of("CONTAINER").unwrap()).await
         }
         ("run", Some(cmd)) => {
-            do_run(&manager, cmd.value_of("IMAGE").unwrap()).await
+            do_run(&manager, cmd.value_of("IMAGE").unwrap(), cmd.is_present("tty")).await
         }
         (_, _) => {
             // clap never returns invalid subcommands
