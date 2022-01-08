@@ -131,9 +131,9 @@ impl Container {
 
     pub async fn run(
         &self,
-        stdin: fidl::Socket,
-        stdout: fidl::Socket,
-        stderr: fidl::Socket,
+        stdin: fidl::Handle,
+        stdout: fidl::Handle,
+        stderr: fidl::Handle,
     ) -> Result<(), Error> {
         // Prevent multiple running instances of the same container
         let run_guard = self.run_mutex.try_lock();
@@ -150,15 +150,15 @@ impl Container {
         let args = fcomponent::CreateChildArgs {
             numbered_handles: Some(vec![
                 fprocess::HandleInfo {
-                    handle: stdin.into_handle(),
+                    handle: stdin,
                     id: HandleInfo::new(HandleType::FileDescriptor, 0).as_raw(),
                 },
                 fprocess::HandleInfo {
-                    handle: stdout.into_handle(),
+                    handle: stdout,
                     id: HandleInfo::new(HandleType::FileDescriptor, 1).as_raw(),
                 },
                 fprocess::HandleInfo {
-                    handle: stderr.into_handle(),
+                    handle: stderr,
                     id: HandleInfo::new(HandleType::FileDescriptor, 2).as_raw(),
                 },
                 fprocess::HandleInfo {
