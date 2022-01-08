@@ -157,11 +157,12 @@ protocol Container {
 
     /// Start container, run a command in it, and wait until it exits.
     ///
-    /// The type of the stdio handles matches the type expected by starnix (sockets).
+    /// The type of the stdio handles must match the type expected by starnix
+    /// (i.e. any type that is supported by zxio).
     Run(resource struct {
-        stdin zx.handle:SOCKET;
-        stdout zx.handle:SOCKET;
-        stderr zx.handle:SOCKET;
+        stdin zx.handle;
+        stdout zx.handle;
+        stderr zx.handle;
     }) -> ();
 };
 

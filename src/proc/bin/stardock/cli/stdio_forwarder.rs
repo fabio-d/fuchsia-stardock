@@ -5,7 +5,7 @@
 use anyhow::Error;
 use fidl_fuchsia_stardock as fstardock;
 use fuchsia_async as fasync;
-use fuchsia_zircon as zx;
+use fuchsia_zircon::{self as zx, HandleBased};
 use futures::AsyncReadExt;
 use std::io::{Read, Write};
 use std::pin::Pin;
@@ -66,7 +66,11 @@ pub async fn run_container_with_stdio(
     let (stdout_socket, stdout_fut) = make_output_forwarder(Box::new(std::io::stdout())).unwrap();
     let (stderr_socket, stderr_fut) = make_output_forwarder(Box::new(std::io::stderr())).unwrap();
 
-    let done_fut = container.run(stdin_socket, stdout_socket, stderr_socket);
+    let done_fut = container.run(
+        stdin_socket.into_handle(),
+        stdout_socket.into_handle(),
+        stderr_socket.into_handle(),
+    );
     let (done_fut, _, _) = futures::join!(done_fut, stdout_fut, stderr_fut);
     done_fut?;
 
