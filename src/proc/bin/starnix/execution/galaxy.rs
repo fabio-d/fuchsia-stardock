@@ -57,8 +57,14 @@ pub struct Galaxy {
 /// # Parameters
 /// - `outgoing_dir`: The outgoing directory of the component to run in the galaxy. This is used
 ///                   to serve protocols on behalf of the component.
+/// - `component_pkg_dir`: The package directory of the component to run in the galaxy. This is used
+///                        to resolve paths listed in component_mounts.
+/// - `component_mounts`: If set, the galaxy's default mounts are ignored and those listed in this
+///                       argument are used instead.
 pub fn create_galaxy(
     outgoing_dir: &mut Option<fidl::endpoints::ServerEnd<fidl_fuchsia_io::DirectoryMarker>>,
+    component_pkg_dir: &fio::DirectorySynchronousProxy,
+    component_mounts: &Option<Vec<String>>,
 ) -> Result<Galaxy, Error> {
     const COMPONENT_PKG_PATH: &'static str = "/pkg";
 
@@ -69,16 +75,30 @@ pub fn create_galaxy(
         server,
     )
     .context("failed to open /pkg")?;
-    let pkg_dir_proxy = fio::DirectorySynchronousProxy::new(client);
+    let galaxy_pkg_dir = fio::DirectorySynchronousProxy::new(client);
+
+    let (mounts, mount_pkg_dir) = match component_mounts {
+        Some(mounts) => (mounts.as_slice(), component_pkg_dir),
+        None => (CONFIG.mounts.as_slice(), &galaxy_pkg_dir),
+    };
+
     let mut kernel = Kernel::new(&to_cstr(&CONFIG.name))?;
     kernel.cmdline = CONFIG.kernel_cmdline.as_bytes().to_vec();
     *kernel.outgoing_dir.lock() = outgoing_dir.take().map(|server_end| server_end.into_channel());
     let kernel = Arc::new(kernel);
 
-    let fs_context = create_fs_context(&kernel, &pkg_dir_proxy)?;
+    // The mounts are appplied in the order listed. Mounting will fail if the designated mount
+    // point doesn't exist in a previous mount. The root must be first so other mounts can be
+    // applied on top of it.
+    let fs_context = create_fs_context(
+        &kernel,
+        &mount_pkg_dir,
+        mounts.first().ok_or_else(|| anyhow!("Mounts list is empty"))?,
+    )?;
     let mut init_task = create_init_task(&kernel, &fs_context)?;
 
-    mount_filesystems(&init_task, &pkg_dir_proxy)?;
+    // Skip the first mount, that was used to create the root filesystem.
+    mount_filesystems(&init_task, &mount_pkg_dir, &mounts[1..])?;
 
     // Hack to allow mounting apexes before apexd is working.
     // TODO(tbodt): Remove once apexd works.
@@ -114,18 +134,11 @@ pub fn create_galaxy(
 
 fn create_fs_context(
     kernel: &Arc<Kernel>,
-    pkg_dir_proxy: &fio::DirectorySynchronousProxy,
+    mount_pkg_dir: &fio::DirectorySynchronousProxy,
+    mount_spec: &str,
 ) -> Result<Arc<FsContext>, Error> {
-    // The mounts are appplied in the order listed. Mounting will fail if the designated mount
-    // point doesn't exist in a previous mount. The root must be first so other mounts can be
-    // applied on top of it.
-    let mut mounts_iter = CONFIG.mounts.iter();
-    let (root_point, root_fs) = create_filesystem_from_spec(
-        &kernel,
-        None,
-        &pkg_dir_proxy,
-        mounts_iter.next().ok_or_else(|| anyhow!("Mounts list is empty"))?,
-    )?;
+    let (root_point, root_fs) =
+        create_filesystem_from_spec(&kernel, None, &mount_pkg_dir, mount_spec)?;
     if root_point != b"/" {
         anyhow::bail!("First mount in mounts list is not the root");
     }
@@ -169,16 +182,14 @@ fn create_init_task(kernel: &Arc<Kernel>, fs: &Arc<FsContext>) -> Result<Current
 
 fn mount_filesystems(
     init_task: &CurrentTask,
-    pkg_dir_proxy: &fio::DirectorySynchronousProxy,
+    mount_pkg_dir: &fio::DirectorySynchronousProxy,
+    mount_specs: &[String],
 ) -> Result<(), Error> {
-    let mut mounts_iter = CONFIG.mounts.iter();
-    // Skip the first mount, that was used to create the root filesystem.
-    let _ = mounts_iter.next();
-    for mount_spec in mounts_iter {
+    for mount_spec in mount_specs {
         let (mount_point, child_fs) = create_filesystem_from_spec(
             init_task.kernel(),
             Some(&init_task),
-            pkg_dir_proxy,
+            mount_pkg_dir,
             mount_spec,
         )?;
         let mount_point = init_task.lookup_path_from_root(mount_point)?;

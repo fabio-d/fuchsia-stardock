@@ -43,13 +43,26 @@ pub async fn start_component(
     mut start_info: ComponentStartInfo,
     controller: ServerEnd<ComponentControllerMarker>,
 ) -> Result<(), Error> {
-    let galaxy = create_galaxy(&mut start_info.outgoing_dir).context("failed to create galaxy")?;
     info!(
         "start_component: {}\narguments: {:?}\nmanifest: {:?}",
         start_info.resolved_url.clone().unwrap_or("<unknown>".to_string()),
         start_info.numbered_handles,
         start_info.program,
     );
+
+    let ns = start_info.ns.take().ok_or_else(|| anyhow!("Missing namespace"))?;
+    let pkg = fio::DirectorySynchronousProxy::new(
+        ns.into_iter()
+            .find(|entry| entry.path == Some("/pkg".to_string()))
+            .ok_or_else(|| anyhow!("Missing /pkg entry in namespace"))?
+            .directory
+            .ok_or_else(|| anyhow!("Missing directory handlee in pkg namespace entry"))?
+            .into_channel(),
+    );
+
+    let mounts = get_program_strvec(&start_info, "mounts").cloned();
+    let galaxy = create_galaxy(&mut start_info.outgoing_dir, &pkg, &mounts)
+        .context("failed to create galaxy")?;
 
     let args = get_program_strvec(&start_info, "args")
         .map(|args| {
@@ -83,16 +96,6 @@ pub async fn start_component(
     let user_passwd = get_program_string(&start_info, "user").unwrap_or("fuchsia:x:42:42");
     let credentials = Credentials::from_passwd(user_passwd)?;
     *current_task.creds.write() = credentials;
-
-    let ns = start_info.ns.take().ok_or_else(|| anyhow!("Missing namespace"))?;
-    let pkg = fio::DirectorySynchronousProxy::new(
-        ns.into_iter()
-            .find(|entry| entry.path == Some("/pkg".to_string()))
-            .ok_or_else(|| anyhow!("Missing /pkg entry in namespace"))?
-            .directory
-            .ok_or_else(|| anyhow!("Missing directory handlee in pkg namespace entry"))?
-            .into_channel(),
-    );
 
     if binary_in_package {
         // If the component's binary path point inside the package, mount the package directory.
